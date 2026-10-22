@@ -36,9 +36,6 @@ These are its entries there, as they were written; the version numbers are model
 
 ### [0.14.0] - 2026-10-22
 
-- Every model of another provider from the router: the OpenAI, Gemini, DeepSeek and xAI doors, `router config
-  --external`, `--codex-home` and `--codex-models`, external judges and workers, and their doctor checks. A
-  model list or a judge setting from an older version that names one no longer stops the router or the hook.
 - Codex is the tribunal's alone: `tribunal config --codex-home`, `--codex-models` and `--declare` set it up.
   It now always runs in an empty directory with its file, image, web, browser and desktop tools off: with a
   shell its read-only sandbox read a decoy file outside the repository, `view_image` read an image outside it,
@@ -91,12 +88,6 @@ code each turn changes, and for critical texts when you ask. Same repository, sa
 - `router config --codex-models` lists the models the configured Codex home can run, read from the home's own model list (`models_cache.json`, which Codex writes), each as a ready declaration with OpenAI's list price as of 2026-10-22 and a tier by family (Luna 0, Sol and Terra 1, Astra 3); `--codex-models sol,luna` declares those and nothing else, all or none, before `--models` and `--judge` in the same command so they may name them; a model already declared through another door is shown as such. `--codex-home` prints the same list when it sets the home. The quota is not read: no stable interface carries it, which is why nothing is declared without being named. A model with no list price known here is shown and left to `--external`.
 - `router doctor` says when a declared OpenAI model's price is not the list one, and fails a `codex` model that is not among the models its home knows (hidden ones included; a home with no list yet is not judged).
 
-### [0.11.0] - 2026-10-21
-
-- `light` verification (the default at high risk, and one of the two judges of a panel or a tribunal) is no longer the worker's own cell in a fresh context: it is the nearest other model at low effort, the tier above before the one below (haiku -> sonnet/low, sonnet -> opus/low, opus -> fable/low, fable -> opus/low), and in a panel or a tribunal a model other than the full judge's when the available models allow it, so that no two of worker, judge A and judge B share a model. The light judge never goes more than one tier down: a Fable worker is judged by opus/low, and when the only other model is the full judge's (two models installed, or a Fable worker in a tribunal with an Opus judge) the worker's own cell, effort capped, takes the second seat rather than a second effort of the judge's model. Measured on a private eval of 28 real tasks: Haiku and Sonnet passed their own first attempts on 89 % and 93 %; an Opus judge passed 64 % and 68 % of the same answers, with word limits broken, formats ignored and facts invented among the reasons. The arbiter by rule now prefers, among the cells that share no company with the judges, a cell at the worker's tier or above, then a model other than the worker's, then the highest tier; the worker's model one effort up is a candidate too. The bench estimate prices the judges the plan names (and a share of arbiters) instead of a constant per mode, and `router calibrate` skips `router judge` records, whose worker cost is not this router's.
-- `router calibrate` counts only independent verdicts as evidence: a checker, or a judge on a model other than the worker's that backed the final verdict (the arbiter's ruling counts as one). A verdict the worker's own model alone gave, as `light` produced until now and as a one-model installation still does, is counted in the report's "left out" figure and moves nothing. The calibration file carries that count (`self_judged`); older files load with 0. On the private eval, the proposal went from 21 moves to 15, and the moves that rested on a cheap cell passing its own reviews and analyses are gone.
-- Critical risk is never inferred: the words "critical", "urgent" and "no undo" no longer make a task critical (a LinkedIn post that mentions a critical decision was going to a tribunal). The high-risk keywords stay. On 28 real tasks the rules read the risk right 9 times and Haiku 5 to 10: both score difficulty or vocabulary, and the risk is in what the answer is for.
-
 ### [0.10.0] - 2026-10-21
 
 - Models of other providers do the work too, once `router config --models` lists them: the lattice takes them with the efforts their door accepts, a start table may name them, and a declared model that is not listed keeps judging while the Claude of its tier takes its tasks (the plan says so). Two new doors by subscription, next to the API ones: `codex` (ChatGPT through `codex exec`, on a Codex home given with `router config --codex-home` or `MODEL_ROUTER_CODEX_HOME`, never the ambient `~/.codex`) and `gemini` (`gemini -p`). Each CLI call runs in an empty directory with read-only tools and nothing persisted (Gemini has no home switch: that door runs on the machine's own `~/.gemini`), and the environment `codex exec` inherits carries no API key or base URL, since the home decides the account; a verdict is asked for with Codex's `--output-schema` (strict, as that backend demands) or in Gemini's prompt, validated here, tried once more when it is not JSON, and otherwise reported as a judge error; a run that ends without an answer is an error too, and an error text never carries the model's output (the ledger keeps error texts, never answers). `router doctor` says per declared model whether its door opens (key, home signed in, executable) and `--live` makes one call through each CLI; `router cells` says which declared models work. The arbiter now prefers a company other than the full judge's (`codex` and `openai` are both OpenAI). The Claude Code hook keeps choosing among Claude models only.
@@ -109,18 +100,15 @@ code each turn changes, and for critical texts when you ask. Same repository, sa
 
 ### [0.8.0] - 2026-10-20
 
-- `router bench`: `--repeat N` runs every task N times (ids become `id.rN`), `--verify auto|none|light|full|panel|tribunal` sets the verification of fixed-cell strategies (`auto` = what the router would pick by risk; today they ran unverified), `--dry-run` validates the file and prints the estimate without a call. Each bench ledger starts with a `bench` note naming its strategy, eval and repeat count.
 - Tribunal verdicts were not treated as evidence: they never fed the feedback store and `router feedback` could not correct them. `VERIFIED_SOURCES` now includes `tribunal`.
 - The README opens with a new figure, a critical task on trial: the tribunal told as a courtroom, every seat labelled with its cell (worker, two blind judges, arbiter, you), a split, a retry on the next cell and the ledger. Built by `docs/showcase/build.py`, which also keeps the frames (`--frames`) and the carousel; it replaces `tribunal.gif`.
 
 ### [0.7.0] - 2026-10-20
 
-- `router judge "<task>" --answer FILE [--cell CELL]`: verify an answer written elsewhere (a Claude Code subagent, a person) with the plan's judges, light to tribunal, judges from other providers included. It is recorded in the ledger as one attempt with no worker cost and the stop reason `external`, so `router feedback` and the judges' scoreboard see it; the feedback store is left alone. Exit 1 on a fail; `--json` prints every judge's verdict. `Router.judge` is the library call. The skill now verifies subagent results this way by default and launches judge subagents only when the verdict needs tools.
 - `router run` never reached a judge from another provider: only `router bench` wrapped the client. Both do now.
 
 ### [0.6.1] - 2026-10-20
 
-- Two animated figures in the README, built from `docs/showcase/build.py`: a real `router run` on a critical writing task, and the tribunal step by step (two blind judges, a split, the arbiter). Mermaid diagrams next to them for the loop and the tribunal.
 - README brought up to date with 0.6.0: judges may come from another provider (the council comparison, the simulation note, what leaves your machine, the library example), only verified verdicts feed the feedback store, a judge that cannot be reached ends the task as `error`. The skill says a judge from another provider cannot be a subagent.
 
 ### [0.6.0] - 2026-10-20
@@ -136,16 +124,6 @@ code each turn changes, and for critical texts when you ask. Same repository, sa
 - The skill tells the orchestrator how to run a tribunal with subagents: both reviews blind, a third subagent to arbitrate a split.
 - `router (no panel)` in the simulation is now `router (one judge)`.
 
-### [0.4.3] - 2026-10-20
-
-- Feedback store: it learns only from verified verdicts (checker, judge, panel); unverified passes, refusals, truncations and judge errors are no longer counted, and the first-attempt flag belongs to the start cell only (a cell reached after a refusal was counted as a first attempt). `router feedback` moves a count only when the verdict actually changes, so repeating a correction no longer drains other tasks' passes. The file is written atomically and merged under a lock, so two processes sharing it keep each other's counts; an unreadable file starts empty and is replaced on the next save.
-
-### [0.4.1] - 2026-10-20
-
-- The `full` judge is one fixed cell, `opus/high` by default, set with `router config --judge` or `MODEL_ROUTER_JUDGE`, in a fresh context. When the worker is on the judge's model, the judge moves to the next model up at low effort, or to the model below when there is nothing above. It was the cheapest cell clearly more capable than the worker, which at the top of the lattice meant Fable at xhigh or max judging Fable: one verdict cost $0.42 in the first real bench. No judge runs above `high` effort. The `light` judge is the worker's own cell in a fresh context, capped the same way, and the panel is those two.
-
 ### [0.4.0] - 2026-10-20
 
 - `panel` verification mode: two judges on different cells, cheapest first, blind to each other. The answer passes only when both pass, and the second judge is not asked when the first fails. The policy uses it on its own at critical risk for `analysis`, `write` and `review` tasks with no checker; `Policy(panel_kinds=...)` changes the kinds, `--verify full` forces one judge and `--verify panel` forces two on any task. It is the part of an LLM council that pays when every model is Claude: a second independent opinion, without shared answers, ranking or chairman.
-- `judges_for` on policies and `judges` on every attempt (ledger and `--json` included); `router plan` prints both judges of a panel.
-- The simulation compares `router` with `router (no panel)` and assumes the judges of one answer share their random draw half the time (`JUDGE_CORRELATION`), so correlated judges are priced in.
