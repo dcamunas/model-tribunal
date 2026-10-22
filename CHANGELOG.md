@@ -2,6 +2,14 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.1.2] - 2026-10-22
+
+### Fixed
+
+- A session opened before a plugin update stopped judging until a new session started, and a SessionStart from
+  it (a compact, a resume) put the older version back under every newer session. The hook now runs the newer
+  environment as it is and never downgrades.
+
 ## [0.1.1] - 2026-10-22
 
 ### Changed

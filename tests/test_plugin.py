@@ -51,3 +51,19 @@ def test_the_script_is_silent_outside_a_plugin_when_off_and_before_bootstrap(tmp
     proc = _run({"hook_event_name": "SessionStart"}, "--bootstrap",
                 env={**plugin, "PATH": str(empty), "MODEL_TRIBUNAL_UV": str(tmp_path / "no-uv")})
     assert proc.returncode == 0 and proc.stdout == "" and "cannot find uv" in proc.stderr
+
+
+def test_a_session_older_than_the_environment_runs_it_and_never_downgrades(tmp_path):
+    data = tmp_path / "data"
+    bindir = data / "venv" / "bin"
+    bindir.mkdir(parents=True)
+    hook = bindir / "tribunal-hook"
+    hook.write_text("#!/bin/sh\ncat >/dev/null\necho ran\n")
+    hook.chmod(0o755)
+    (data / "installed-version").write_text("999.0.0")
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "CLAUDE_PLUGIN_ROOT": str(ROOT), "CLAUDE_PLUGIN_DATA": str(data)}
+    proc = _run({"hook_event_name": "Stop"}, env=env)
+    assert proc.returncode == 0 and proc.stdout == "ran\n" and "a new session uses it" in proc.stderr
+    proc = _run({"hook_event_name": "SessionStart"}, "--bootstrap", env=env)
+    assert proc.returncode == 0 and (data / "installed-version").read_text() == "999.0.0"  # nothing reinstalled
+
