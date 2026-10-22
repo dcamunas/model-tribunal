@@ -1,0 +1,22 @@
+{
+  "name": "tribunal",
+  "displayName": "Tribunal",
+  "version": "0.1.0",
+  "description": "A Claude judge and a Codex judge review each change blind to each other; an arbiter decides when they split. A fail goes back to Claude with the findings.",
+  "author": {
+    "name": "David Camuñas",
+    "url": "https://github.com/dcamunas"
+  },
+  "homepage": "https://github.com/dcamunas/model-tribunal",
+  "repository": "https://github.com/dcamunas/model-tribunal",
+  "license": "MIT",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "codex",
+    "code-review",
+    "qa",
+    "tribunal"
+  ],
+  "skills": "./skills"
+}

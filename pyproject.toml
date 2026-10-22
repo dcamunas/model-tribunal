@@ -1,0 +1,82 @@
+[project]
+name = "model-tribunal"
+version = "0.1.0"
+description = "A Claude judge and a Codex judge review each change blind to each other; an arbiter decides when they split."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "David Camuñas" }
+]
+requires-python = ">=3.12"
+keywords = ["claude", "claude-code", "codex", "code-review", "qa", "tribunal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "model-router @ git+https://github.com/dcamunas/model-router@v0.16.0",
+    "pydantic>=2.9",
+]
+
+[project.urls]
+Repository = "https://github.com/dcamunas/model-tribunal"
+Issues = "https://github.com/dcamunas/model-tribunal/issues"
+Changelog = "https://github.com/dcamunas/model-tribunal/blob/main/CHANGELOG.md"
+
+[project.scripts]
+tribunal = "model_tribunal.cli:entry"
+tribunal-hook = "model_tribunal.hook:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.uv.sources]
+model-router = { path = "../model-router", editable = true }  # while 0.16.0 is not tagged; the git tag above after
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "BLE", "N", "ANN", "ARG", "PTH", "SIM", "RET", "C90", "D"]
+ignore = [
+    "ANN401",  # Any: allowed for external JSON and interchangeable clients, with the reason next to it
+    "D102",    # public methods: a docstring only where it adds to the name (modules, classes and functions always)
+    "D105",    # magic methods
+    "D106",    # nested classes
+    "D107",    # __init__: the class docstring covers it
+    "D205",    # compact style: the first sentence may run into the second line
+]
+extend-select = ["D401"]  # imperative mood on the first line, even though the google convention drops it
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN", "D", "ARG", "PLR2004"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests"]
