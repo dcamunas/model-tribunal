@@ -33,7 +33,9 @@ tribunal config --codex-home ~/.codex          # your Codex home; lists its mode
 tribunal config --codex-models terra           # the Codex model that judges
 ```
 
-The first session builds the plugin's own environment with uv; from then on, a turn that changes code
+Coming from the plugin that lived inside model-router: set the Codex home and the models again, the
+tribunal reads nothing from the router's state. The first session builds the plugin's own environment
+with uv; from then on, a turn that changes code
 ends with one line, or with the findings sent back to Claude. With an Opus chat and Terra as the Codex
 model, the line reads `tribunal: pass (fable/medium + terra/high, arbiter sonnet/high), 3 files`. Without
 a Codex model it still runs, with a second Claude model as judge B, and says so.

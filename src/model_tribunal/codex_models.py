@@ -120,7 +120,7 @@ def _free(name: str, model_id: str, taken: set[str]) -> str:
     return candidate
 
 
-def price_note(model_id: str, price_in: float, price_out: float) -> str | None:
+def price_note(model_id: str, *, price_in: float, price_out: float) -> str | None:
     """Return a note when a declared price differs from OpenAI's list price for `model_id`, else None."""
     listed = OPENAI_PRICES.get(model_id)
     if listed is None or (abs(listed[0] - price_in) < PRICE_TOLERANCE and abs(listed[1] - price_out) < PRICE_TOLERANCE):

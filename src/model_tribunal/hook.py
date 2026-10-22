@@ -56,13 +56,16 @@ STATE_FILE = "hook-state.json"
 MAX_SESSIONS = 50  # sessions kept in the state file, the most recent ones
 MAX_REASON_CHARS = 4000
 MAX_NOTICE_CHARS = 600  # how much of a verdict's reason a one-line notice carries
+MAX_ERROR_CHARS = 300  # how much of a judge error a notice carries
 STALE_TURN = timedelta(hours=6)  # an open turn older than this is taken for one that never reached its Stop
 EDIT_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit", "Bash"})  # Bash may edit: counted as editing
 
 
 @contextlib.contextmanager
-def _state() -> Generator[dict[str, Any]]:
-    """Yield the per-session state, locked against other sessions, and save it on exit."""
+def sessions() -> Generator[dict[str, Any]]:
+    """Yield the per-session state (one entry per session, with its open turn), locked against other sessions,
+    and save it on exit.
+    """
     path = home() / STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     with (home() / (STATE_FILE + ".lock")).open("a") as lock:
@@ -88,7 +91,7 @@ def on_prompt(event: dict[str, Any]) -> None:
     session = str(event.get("session_id") or "")
     if not session:
         return
-    with _state() as state:
+    with sessions() as state:
         state.pop(session, None)  # a turn that cannot be set up must not be judged against the last one
     repo = repo_root(Path(str(event.get("cwd") or ".")))
     if repo is None:
@@ -96,9 +99,11 @@ def on_prompt(event: dict[str, Any]) -> None:
     load_declared(read_config())  # a declared Codex model in the settings must resolve
     brief = str(event.get("prompt") or "")[:MAX_BRIEF_CHARS]
     raw = raw_settings(repo, brief)
+    if str(raw.get("mode") or "").lower() == "off":
+        return  # the settings say so now, and they are taken now: nothing to snapshot
     tree = snapshot(repo)
     now = _now()
-    with _state() as state:
+    with sessions() as state:
         overlaps = [k for k, t in state.items()
                     if t.get("repo") == str(repo) and t.get("open") and not _stale(t.get("at", ""))]
         for k in overlaps:
@@ -113,14 +118,14 @@ def on_stop(event: dict[str, Any]) -> dict[str, Any] | None:
     The turn is closed whatever happens, unless it is sent back to Claude.
     """
     session = str(event.get("session_id") or "")
-    with _state() as state:
+    with sessions() as state:
         turn = dict(state.get(session) or {})
         others = {k: dict(state[k]) for k in turn.get("overlaps", []) if k in state}
     if not turn:
         return None
     blocked = False
     try:
-        out = _judge_turn(event, turn, others)
+        out = _judge_turn(event, turn=turn, others=others)
         blocked = bool(out and out.get("decision") == "block")
         return out
     finally:
@@ -128,40 +133,40 @@ def on_stop(event: dict[str, Any]) -> dict[str, Any] | None:
             _close(session, turn["base"])
 
 
-def _judge_turn(event: dict[str, Any], turn: dict[str, Any], others: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+def _judge_turn(event: dict[str, Any], *, turn: dict[str, Any], others: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
     session = str(event.get("session_id") or "")
     repo = Path(turn["repo"])
     load_declared(read_config())
     chat = main_model(event.get("transcript_path"))
-    s = resolve(turn.get("settings") or raw_settings(repo, turn.get("brief", "")), chat)
-    if s.mode == "off":
+    seats = resolve(turn.get("settings") or raw_settings(repo, turn.get("brief", "")), chat)
+    if seats.mode == "off":
         return None
     current = snapshot(repo)
-    files = changed_files(repo, turn["base"], current)
-    if not files or only_docs(files) or current == turn.get("judged") or turn["rounds"] >= s.rounds:
+    files = changed_files(repo, base=turn["base"], current=current)
+    if not files or only_docs(files) or current == turn.get("judged") or turn["rounds"] >= seats.rounds:
         return None  # nothing new to judge, or the last review's fail was already reported
-    review = run_qa(repo, turn.get("brief", ""), diff_text(repo, turn["base"], current), s, author=chat_cell(chat),
-                    current_files=files_now(repo, current, files), files=len(files))
+    review = run_qa(repo, turn.get("brief", ""), diff=diff_text(repo, base=turn["base"], current=current), seats=seats,
+                    author=chat_cell(chat), current_files=files_now(repo, current, files=files), files=len(files))
     rounds = turn["rounds"] + 1
-    with _state() as state:
+    with sessions() as state:
         if state.get(session, {}).get("base") == turn["base"]:  # not a turn that started while this one was judged
             state[session].update(rounds=rounds, judged=current)
     ruling = review.ruling
-    who = s.describe()
+    who = seats.describe()
     if review.status == "pass":
         return {"systemMessage": f"tribunal: pass ({who}), {len(files)} files"}
     if review.status == "error":
         heard = " | ".join(f"{v.cell}: {'pass' if v.passed else 'fail'}: {v.reason}" for v in ruling.verdicts)
-        return {"systemMessage": f"tribunal: could not judge ({who}): {ruling.reason[:300]}"
+        return {"systemMessage": f"tribunal: could not judge ({who}): {ruling.reason[:MAX_ERROR_CHARS]}"
                                  + (f". Heard from {heard[:MAX_NOTICE_CHARS]}" if heard else "")}
     editors = [k for k, t in others.items() if _edited_since(t.get("transcript", ""), turn["at"])]
     if editors:  # another session edited the repository during this turn: its edits are in this diff too
         return {"systemMessage": f"tribunal: fail ({who}), not sent back because another session edited "
                                  f"{repo.name} during this turn and its edits are part of this change: "
                                  f"{ruling.reason[:MAX_NOTICE_CHARS]}"}
-    if rounds < s.rounds:
+    if rounds < seats.rounds:
         text = (f"The tribunal ({who}) reviewed the change you made in this turn and failed it "
-                f"(review {rounds} of {s.rounds}). Fix what is right in these findings, say briefly what you changed "
+                f"(review {rounds} of {seats.rounds}). Fix what is right in these findings, say briefly what you changed "
                 f"and what you disagree with and why, then finish:\n\n{ruling.reason}")
         return {"decision": "block", "reason": text[:MAX_REASON_CHARS]}
     return {"systemMessage": f"tribunal: fail after {rounds} reviews ({who}): {ruling.reason[:MAX_NOTICE_CHARS]}"}
@@ -170,13 +175,13 @@ def _judge_turn(event: dict[str, Any], turn: dict[str, Any], others: dict[str, d
 def on_session_end(event: dict[str, Any]) -> None:
     """Forget a session that ended: its turn is no longer open."""
     session = str(event.get("session_id") or "")
-    with _state() as state:
+    with sessions() as state:
         state.pop(session, None)
 
 
 def _close(session: str, base: str) -> None:
     """Mark the session's turn as finished (it no longer edits the repository), unless a newer turn replaced it."""
-    with _state() as state:
+    with sessions() as state:
         if state.get(session, {}).get("base") == base:
             state[session]["open"] = False
 

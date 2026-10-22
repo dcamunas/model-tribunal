@@ -59,6 +59,8 @@ MAX_FILE_CHARS = 12_000  # and each one up to here
 DECLARED_QA = re.compile(r"(?:^|[\s,;(\[])qa\s*[:=]\s*(off|final|parallel)(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
 DEFAULT_AUTHOR = "opus/medium"  # the cell recorded as the author when the chat's model is unknown
 RECORD_ID_BYTES = 6
+TAG_BYTES = 6  # the random id in the tags around the material, so a diff cannot forge a closing tag
+MAX_ERROR_CHARS = 300  # how much of a git error a message carries
 
 QA_JUDGE_SYSTEM = (
     "You are an independent reviewer of a code change. You receive the brief the developer was given and the "
@@ -178,7 +180,7 @@ def raw_settings(repo: Path | None, brief: str = "") -> dict[str, Any]:
     return merged
 
 
-def settings(repo: Path, brief: str = "", chat_model: str | None = None) -> Settings:
+def settings(repo: Path, brief: str = "", *, chat_model: str | None = None) -> Settings:
     """Resolve the settings for `repo` and `brief` as they stand now (see `raw_settings` and `resolve`)."""
     return resolve(raw_settings(repo, brief), chat_model)
 
@@ -203,9 +205,9 @@ def resolve(raw: dict[str, Any], chat_model: str | None = None) -> Settings:
     available = available_models()
     fallbacks = [c for c in map(parse_cell, FALLBACK_CLAUDE) if c.model in available]
     chat = {chat_model} if chat_model else set()
-    claude = _not_on(nearest_available(parse_cell(str(raw.get("claude") or DEFAULTS["claude"])), available), chat,
-                     fallbacks)
-    codex = parse_cell(str(raw["codex"])) if raw.get("codex") else _default_codex()
+    claude = _not_on(nearest_available(parse_cell(str(raw.get("claude") or DEFAULTS["claude"])), available),
+                     avoid=chat, fallbacks=fallbacks)
+    codex = nearest_available(parse_cell(str(raw["codex"])), available) if raw.get("codex") else _default_codex()
     if codex is not None and codex.model == claude.model:
         raise ValueError(f"judge B ({codex}) must be on another model than judge A ({claude})")
     if codex is None:
@@ -236,7 +238,7 @@ def _rounds(raw: dict[str, Any]) -> int:
     return min(MAX_ROUNDS, max(1, rounds))
 
 
-def _not_on(cell: Cell, avoid: set[str], fallbacks: list[Cell]) -> Cell:
+def _not_on(cell: Cell, *, avoid: set[str], fallbacks: list[Cell]) -> Cell:
     """Return `cell`, or the first of `fallbacks` whose model is not in `avoid` when `cell`'s is."""
     if cell.spec.short not in avoid:
         return cell
@@ -261,18 +263,25 @@ def chat_cell(model: str | None) -> Cell | None:
 # ---- git ------------------------------------------------------------------------------------------------------
 
 
+class GitError(RuntimeError):
+    """Git is missing, or a git command failed; the message carries the command and git's own words."""
+
+
 def _git(repo: Path, *args: str, env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,),
          stdin: str | None = None) -> str:
     """Run git in `repo` with paths unquoted and output read as UTF-8 (undecodable bytes replaced, so a Latin-1
-    file in a diff does not stop the review); an exit code outside `ok` raises RuntimeError.
+    file in a diff does not stop the review).
+
+    Raises:
+        GitError: git is not on the PATH, or the exit code is outside `ok`.
     """
     git = shutil.which("git")
     if git is None:
-        raise RuntimeError("git is not on the PATH")
+        raise GitError("git is not on the PATH")
     proc = subprocess.run([git, "-c", "core.quotePath=false", *args], cwd=repo, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", env=env, timeout=GIT_TIMEOUT, check=False, input=stdin)
     if proc.returncode not in ok:
-        raise RuntimeError(f"git {' '.join(args)}: {proc.stderr.strip()[:300]}")
+        raise GitError(f"git {' '.join(args)}: {proc.stderr.strip()[:MAX_ERROR_CHARS]}")
     return proc.stdout
 
 
@@ -285,7 +294,7 @@ def repo_root(cwd: Path) -> Path | None:
     """Return the top of the git working tree `cwd` is in, or None outside one."""
     try:
         return Path(_git(cwd, "rev-parse", "--show-toplevel").strip())
-    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+    except (GitError, OSError, subprocess.TimeoutExpired):
         return None
 
 
@@ -296,7 +305,7 @@ def snapshot(repo: Path) -> str:
     file git cannot read is left out, not fatal. Submodules count as their committed pointer.
 
     Raises:
-        RuntimeError: git failed.
+        GitError: git failed.
     """
     with tempfile.TemporaryDirectory(prefix="tribunal-") as tmp:
         # Not a copy of the real index: its stat cache takes a file rewritten at the same size with the same timestamp
@@ -309,13 +318,13 @@ def snapshot(repo: Path) -> str:
         small = [p for p in others if p and _small(repo / p)]
         if small:  # update-index takes the names literally and shrugs at one that vanished since it was listed
             try:
-                _add_untracked(repo, env, small)
-            except RuntimeError:  # one changed under us (became unreadable, a directory): list them again, once
-                _add_untracked(repo, env, [p for p in small if _small(repo / p)])
+                _add_untracked(repo, env=env, paths=small)
+            except GitError:  # one changed under us (became unreadable, a directory): list them again, once
+                _add_untracked(repo, env=env, paths=[p for p in small if _small(repo / p)])
         return _git(repo, "write-tree", env=env).strip()
 
 
-def _add_untracked(repo: Path, env: dict[str, str], paths: list[str]) -> None:
+def _add_untracked(repo: Path, *, env: dict[str, str], paths: list[str]) -> None:
     if paths:
         _git(repo, "update-index", "--add", "--remove", "-z", "--stdin", env=env, ok=(0, 1),
              stdin="\0".join(paths) + "\0")
@@ -338,7 +347,7 @@ def tree_of(repo: Path, ref: str) -> str:
     """Return the id of the tree `ref` (a commit, a branch, HEAD) points at in `repo`.
 
     Raises:
-        RuntimeError: git does not know `ref`.
+        GitError: git does not know `ref`.
     """
     if ref == "HEAD" and not has_head(repo):
         return empty_tree(repo)
@@ -350,12 +359,12 @@ def empty_tree(repo: Path) -> str:
     return _git(repo, "hash-object", "-w", "-t", "tree", "--stdin", stdin="").strip()
 
 
-def changed_files(repo: Path, base: str, current: str) -> list[str]:
+def changed_files(repo: Path, *, base: str, current: str) -> list[str]:
     """Return the paths that differ between the trees `base` and `current`."""
     return [p for p in _git(repo, "diff", "--name-only", "-z", "--no-ext-diff", base, current).split("\0") if p]
 
 
-def diff_text(repo: Path, base: str, current: str) -> str:
+def diff_text(repo: Path, *, base: str, current: str) -> str:
     """Return the unified diff from tree `base` to tree `current`, renames detected."""
     return _git(repo, "diff", "-M", "--no-color", "--no-ext-diff", "--no-textconv", base, current)
 
@@ -365,7 +374,7 @@ def only_docs(files: list[str]) -> bool:
     return bool(files) and all(f.lower().endswith(DOC_SUFFIXES) for f in files)
 
 
-def files_now(repo: Path, tree: str, files: list[str], limit: int = MAX_FILES_CHARS) -> str:
+def files_now(repo: Path, tree: str, *, files: list[str], limit: int = MAX_FILES_CHARS) -> str:
     """Return the changed `files` as they are in `tree`, whole, so a judge that cannot open the repository sees
     the code around each change: text files only, each up to MAX_FILE_CHARS, all of them up to `limit`, and a
     note for what is left out. Deleted files are not shown (the diff has them).
@@ -374,7 +383,7 @@ def files_now(repo: Path, tree: str, files: list[str], limit: int = MAX_FILES_CH
     for path in files:
         try:
             text = _git(repo, "show", f"{tree}:{path}")
-        except RuntimeError:  # deleted in this change, or a submodule
+        except GitError:  # deleted in this change, or a submodule
             continue
         if "\0" in text or len(text) > MAX_FILE_CHARS or used + len(text) > limit:
             left_out.append(path)
@@ -414,44 +423,46 @@ def repo_client(repo: Path) -> ClaudeClient:
     return MultiClient(claude, factory=lambda: CodexClient(resolve_codex_home()[0], timeout=JUDGE_TIMEOUT))
 
 
-def run_qa(repo: Path, brief: str, diff: str, s: Settings, *, client: ClaudeClient | None = None,
+def run_qa(repo: Path, brief: str, *, diff: str, seats: Settings, client: ClaudeClient | None = None,
            ledger_path: Path | None = None, author: Cell | None = None, current_files: str = "",
            files: int = 0) -> Review:
     """Judge `diff` (with `current_files`, the changed files as they are now, from `files_now`) against `brief`
-    with the seats `s` describes; record it and return it. `author` is the cell that wrote the change (the
-    chat's model, when known); it is recorded, never judged.
+    with `seats`; record it and return it. `author` is the cell that wrote the change (the chat's model, when
+    known); it is recorded, never judged.
     """
     task = Task(prompt=brief.strip()[:MAX_BRIEF_CHARS] or "(no brief: judge the change on its own: correct, "
                 "complete, and nothing that worked is broken)", kind="code", risk="critical")
-    tribunal = Tribunal(client or repo_client(repo), judges=s.judges, arbiter=s.arbiter, judge_system=QA_JUDGE_SYSTEM,
-                        arbiter_system=QA_ARBITER_SYSTEM)
-    tag = f"change-{secrets.token_hex(6)}"  # a diff that writes a closing tag cannot leave the material
+    tribunal = Tribunal(client or repo_client(repo), judges=seats.judges, arbiter=seats.arbiter,
+                        judge_system=QA_JUDGE_SYSTEM, arbiter_system=QA_ARBITER_SYSTEM)
+    tag = f"change-{secrets.token_hex(TAG_BYTES)}"
     material = fit_diff(diff) + (f"\n\n{current_files}" if current_files else "")
-    return _review(task, f"<{tag}>\n{material}\n</{tag}>", tribunal, s, what="qa", about=repo.name,
+    return _review(task, f"<{tag}>\n{material}\n</{tag}>", tribunal=tribunal, seats=seats, what="qa", about=repo.name,
                    author=author or parse_cell(DEFAULT_AUTHOR), files=files, ledger_path=ledger_path)
 
 
-def judge_answer(task: Task, answer: str, s: Settings, client: ClaudeClient, *, author: Cell | None = None,
+def judge_answer(task: Task, answer: str, *, seats: Settings, client: ClaudeClient, author: Cell | None = None,
                  ledger_path: Path | None = None) -> Review:
-    """Judge a text `answer` to `task` written elsewhere (critical prose, an analysis, a review) with the seats `s`
-    describes, no repository involved; record it and return it.
+    """Judge a text `answer` to `task` written elsewhere (critical prose, an analysis, a review) with `seats`, no
+    repository involved; record it and return it.
     """
-    tribunal = Tribunal(client, judges=s.judges, arbiter=s.arbiter)
-    return _review(task, answer, tribunal, s, what="judge", about=f"{task.kind}/{task.risk}",
+    tribunal = Tribunal(client, judges=seats.judges, arbiter=seats.arbiter)
+    return _review(task, answer, tribunal=tribunal, seats=seats, what="judge", about=f"{task.kind}/{task.risk}",
                    author=author or parse_cell(DEFAULT_AUTHOR), ledger_path=ledger_path)
 
 
-def _review(task: Task, answer: str, tribunal: Tribunal, s: Settings, *, what: str, about: str, author: Cell,
+def _review(task: Task, answer: str, *, tribunal: Tribunal, seats: Settings, what: str, about: str, author: Cell,
             files: int = 0, ledger_path: Path | None) -> Review:
     """Run `tribunal` on `answer` and record the review; a ledger that cannot be written never hides the verdict."""
-    started = clock.now().isoformat(timespec="seconds")
-    t0 = time.monotonic()
+    started_at = clock.now().isoformat(timespec="seconds")
+    started = time.monotonic()
     try:
         ruling = tribunal.verify(task, answer)
     except ClientUnavailableError as exc:
-        ruling = Ruling(False, "judge-error", f"a judge could not be reached: {exc}", judges=s.judges)
-    review = Review(secrets.token_hex(RECORD_ID_BYTES), started, what, about, author.label, ruling, list(s.notes),
-                    files, time.monotonic() - t0, tribunal_version())
+        ruling = Ruling(passed=False, source="judge-error", reason=f"a judge could not be reached: {exc}",
+                        judges=seats.judges)
+    review = Review(id=secrets.token_hex(RECORD_ID_BYTES), at=started_at, what=what, about=about, author=author.label,
+                    ruling=ruling, notes=list(seats.notes), files=files, seconds=time.monotonic() - started,
+                    version=tribunal_version())
     with contextlib.suppress(OSError):
         ledger.append(ledger_path or home() / LEDGER, review.to_dict())
     return review

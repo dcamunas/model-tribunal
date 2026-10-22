@@ -15,6 +15,8 @@ from typing import Any  # Any: ledger records are JSON lines
 
 from .verify import ARBITER
 
+SMALL_AMOUNT_USD = 0.01  # below this, two decimals would show nothing
+
 
 def append(path: Path, record: dict[str, Any]) -> None:
     """Append `record` as one JSON line to `path`, under a lock, creating the directory."""
@@ -45,7 +47,7 @@ def money(value: float | None) -> str:
     """Format a USD amount for a table, with the precision small verification costs need."""
     if value is None:
         return "-"
-    return f"${value:.4f}" if value < 0.01 else f"${value:.2f}"
+    return f"${value:.4f}" if value < SMALL_AMOUNT_USD else f"${value:.2f}"
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
@@ -80,12 +82,12 @@ class Summary:
                  f"verification {money(self.cost)}"]
         if self.by_judge:
             rows = []
-            for label, s in sorted(self.by_judge.items(), key=lambda kv: -kv[1]["verdicts"]):
-                paired = s["agreed"] + s["split"]
-                ruled = s["backed"] + s["overruled"]
-                rows.append([label, s["verdicts"], f"{s['passes'] / s['verdicts']:.0%}",
-                             f"{s['agreed'] / paired:.0%} of {paired}" if paired else "-",
-                             f"{s['backed'] / ruled:.0%} of {ruled}" if ruled else "-"])
+            for label, row in sorted(self.by_judge.items(), key=lambda kv: -kv[1]["verdicts"]):
+                paired = row["agreed"] + row["split"]
+                ruled = row["backed"] + row["overruled"]
+                rows.append([label, row["verdicts"], f"{row['passes'] / row['verdicts']:.0%}",
+                             f"{row['agreed'] / paired:.0%} of {paired}" if paired else "-",
+                             f"{row['backed'] / ruled:.0%} of {ruled}" if ruled else "-"])
             lines.append("")
             lines.append("judges' scoreboard (agreed = with the other judge; backed = by the arbiter on a split)")
             lines.append(table(["judge", "verdicts", "pass rate", "agreed", "backed"], rows))
@@ -94,19 +96,19 @@ class Summary:
 
 def summarize(records: list[dict[str, Any]]) -> Summary:
     """Aggregate review records into a Summary."""
-    s = Summary()
-    for r in records:
-        s.reviews += 1
-        passed = r.get("passed")
-        if r.get("source") == "judge-error" or passed is None:
-            s.errors += 1
+    summary = Summary()
+    for record in records:
+        summary.reviews += 1
+        passed = record.get("passed")
+        if record.get("source") == "judge-error" or passed is None:
+            summary.errors += 1
         elif passed:
-            s.passed += 1
+            summary.passed += 1
         else:
-            s.failed += 1
-        s.cost += float(r.get("cost_usd") or 0.0)
-    s.by_judge = scoreboard(records)
-    return s
+            summary.failed += 1
+        summary.cost += float(record.get("cost_usd") or 0.0)
+    summary.by_judge = scoreboard(records)
+    return summary
 
 
 def scoreboard(records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
@@ -116,14 +118,14 @@ def scoreboard(records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     """
     board: dict[str, dict[str, int]] = defaultdict(
         lambda: {"verdicts": 0, "passes": 0, "agreed": 0, "split": 0, "backed": 0, "overruled": 0})
-    for r in records:
-        verdicts = [v for v in r.get("verdicts") or [] if isinstance(v, dict) and v.get("cell")]
+    for record in records:
+        verdicts = [v for v in record.get("verdicts") or [] if isinstance(v, dict) and v.get("cell")]
         judges = [v for v in verdicts if v.get("role") != ARBITER]
         arbiter = next((v for v in verdicts if v.get("role") == ARBITER), None)
         for v in judges:
-            b = board[str(v["cell"])]
-            b["verdicts"] += 1
-            b["passes"] += bool(v.get("passed"))
+            row = board[str(v["cell"])]
+            row["verdicts"] += 1
+            row["passes"] += bool(v.get("passed"))
         if len(judges) == 2:
             same = bool(judges[0].get("passed")) == bool(judges[1].get("passed"))
             for v in judges:

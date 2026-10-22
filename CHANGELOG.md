@@ -15,3 +15,10 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 - Settings live at the top of `~/.model-tribunal/config.json` (`mode`, `claude`, `codex`, `arbiter`,
   `rounds`, `codex_home`, `models`); `MODEL_TRIBUNAL=0` turns the hook off, `MODEL_TRIBUNAL_CODEX_HOME`
   names the Codex home, `MODEL_TRIBUNAL_HOME` moves the state.
+
+### Upgrading from the plugin inside model-router (0.15.1 and before)
+
+Nothing is read from the router's state. Set the Codex home and the models again (`tribunal config
+--codex-home ... --codex-models ...`); the old settings in `~/.model-router/config.json` (`codex_home`,
+`external`, `qa`) can be deleted, the router ignores them. Reviews the old plugin wrote into the router's
+ledger stay there; `tribunal stats` starts from zero.

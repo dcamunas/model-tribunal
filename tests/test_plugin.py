@@ -43,8 +43,9 @@ def test_the_script_is_silent_outside_a_plugin_when_off_and_before_bootstrap(tmp
     proc = _run({"hook_event_name": "Stop"}, env=plugin)
     assert proc.returncode == 0 and proc.stdout == "" and "not ready yet" in proc.stderr
     assert not (tmp_path / "data").exists()
-    proc = _run({"hook_event_name": "Stop"}, env={**plugin, "MODEL_TRIBUNAL": "0"})
-    assert proc.returncode == 0 and proc.stdout == "" and proc.stderr == ""
+    for off in ({"MODEL_TRIBUNAL": "0"}, {"MODEL_ROUTER_CHILD": "1"}):
+        proc = _run({"hook_event_name": "Stop"}, env={**plugin, **off})
+        assert proc.returncode == 0 and proc.stdout == "" and proc.stderr == ""
     empty = tmp_path / "nobin"
     empty.mkdir()
     proc = _run({"hook_event_name": "SessionStart"}, "--bootstrap",

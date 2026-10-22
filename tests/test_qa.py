@@ -62,17 +62,17 @@ def test_a_snapshot_sees_new_untracked_and_committed_work_and_touches_neither_in
     status_before = git(repo, "status", "--porcelain")
     current = qa.snapshot(repo)
     assert (repo / ".git" / "index").read_bytes() == index_before and git(repo, "status", "--porcelain") == status_before
-    assert qa.changed_files(repo, base, current) == ["calc.py", "new.py"]  # build/ is ignored
+    assert qa.changed_files(repo, base=base, current=current) == ["calc.py", "new.py"]  # build/ is ignored
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "committed during the turn")
-    assert qa.changed_files(repo, base, qa.snapshot(repo)) == ["calc.py", "new.py"]  # a commit stays in the change
-    assert "+    return a + b + 1" in qa.diff_text(repo, base, current)
+    assert qa.changed_files(repo, base=base, current=qa.snapshot(repo)) == ["calc.py", "new.py"]  # a commit stays in the change
+    assert "+    return a + b + 1" in qa.diff_text(repo, base=base, current=current)
     assert qa.tree_of(repo, "HEAD") == qa.snapshot(repo)
     same_size = qa.snapshot(repo)
     stat = (repo / "new.py").stat()
     (repo / "new.py").write_text("x = 2\n")
     os.utime(repo / "new.py", ns=(stat.st_atime_ns, stat.st_mtime_ns))  # same size and timestamp: a stat cache misses it
-    assert qa.changed_files(repo, same_size, qa.snapshot(repo)) == ["new.py"]
+    assert qa.changed_files(repo, base=same_size, current=qa.snapshot(repo)) == ["new.py"]
     assert qa.repo_root(repo / "build") == repo and qa.repo_root(repo.parent) is None
     assert qa.only_docs(["README.md", "docs/guía.md"]) and not qa.only_docs(["README.md", "calc.py"]) and not qa.only_docs([])
     assert not qa.only_docs(["requirements.txt"]) and not qa.only_docs(["CMakeLists.txt"])  # build inputs are code
@@ -110,12 +110,12 @@ def test_settings_come_from_machine_repo_and_brief_and_never_judge_with_the_chat
 
 
 def test_run_qa_asks_both_judges_blind_and_the_arbiter_settles_a_split(repo, tmp_path):
-    s = qa.settings(repo)
+    seats = qa.settings(repo)
     path = tmp_path / "ledger.jsonl"
     client = FakeClient(judge={"opus/high": [ok("does the job")], "fable/medium": [ko("off by one")],
                                "sonnet/high": [ko("judge B was right")]})
-    review = qa.run_qa(repo, "make add return the sum", "diff --git a/calc.py ...", s, client=client, ledger_path=path,
-                       files=1)
+    review = qa.run_qa(repo, "make add return the sum", diff="diff --git a/calc.py ...", seats=seats, client=client,
+                       ledger_path=path, files=1)
     assert review.status == "fail" and review.ruling.source == "tribunal" and review.ruling.arbiter == parse_cell("sonnet/high")
     assert "arbiter sonnet/high sided with fable/medium" in review.ruling.reason and "calc.py:2" in review.ruling.reason
     calls = [c for c in client.calls if c["output_format"] == "Verdict"]
@@ -135,7 +135,7 @@ def test_a_judge_that_cannot_be_reached_is_an_error_not_a_verdict(repo, tmp_path
                 raise ClientUnavailableError("usage limit reached")
             return super().complete(cell, **kw)
 
-    review = qa.run_qa(repo, "x", "diff", qa.settings(repo), client=Down(judge={"*": [ok()]}),
+    review = qa.run_qa(repo, "x", diff="diff", seats=qa.settings(repo), client=Down(judge={"*": [ok()]}),
                        ledger_path=tmp_path / "l.jsonl")
     assert review.status == "error" and review.passed is None and "usage limit reached" in review.ruling.reason
 
@@ -180,7 +180,9 @@ def test_the_hook_leaves_docs_off_repos_and_the_router_s_own_sessions_alone(hook
     assert hook.handle(event("Stop")) is None  # documentation only
     hook.handle(event("UserPromptSubmit", prompt="qa: off\nchange it"))
     (repo / "calc.py").write_text("def add(a, b):\n    return 0\n")
-    assert hook.handle(event("Stop")) is None  # the request said off
+    assert hook.handle(event("Stop")) is None  # the request said off: not even a snapshot was taken
+    with hook.sessions() as state:
+        assert "s1" not in state
     outside = tmp_path / "plain"
     outside.mkdir()
     assert hook.handle({"hook_event_name": "UserPromptSubmit", "session_id": "s2", "cwd": str(outside)}) is None
@@ -228,12 +230,12 @@ def test_snapshot_sees_ignored_tracked_files_skips_big_and_unreadable_untracked_
     locked.write_text("secret = 1\n")
     locked.chmod(0)
     try:
-        assert qa.changed_files(repo, base, qa.snapshot(repo)) == ["build/keep.cfg"]
+        assert qa.changed_files(repo, base=base, current=qa.snapshot(repo)) == ["build/keep.cfg"]
     finally:
         locked.chmod(0o644)
     (repo / "latin.py").write_bytes("# café\n".encode("latin-1"))
     git(repo, "config", "diff.external", "false")  # a user's external diff tool must not replace the diff
-    text = qa.diff_text(repo, base, qa.snapshot(repo))
+    text = qa.diff_text(repo, base=base, current=qa.snapshot(repo))
     assert "+# caf�" in text and "latin.py" in text
 
 
@@ -243,7 +245,7 @@ def test_a_fresh_repository_and_no_head_work(tmp_path):
     git(path, "init", "-q")
     (path / "a.py").write_text("x = 1\n")
     assert not qa.has_head(path) and qa.tree_of(path, "HEAD") == qa.empty_tree(path)
-    assert qa.changed_files(path, qa.empty_tree(path), qa.snapshot(path)) == ["a.py"]
+    assert qa.changed_files(path, base=qa.empty_tree(path), current=qa.snapshot(path)) == ["a.py"]
 
 
 def test_fallback_judges_stay_on_the_models_this_installation_has(repo, monkeypatch):
@@ -331,21 +333,24 @@ def test_only_a_session_that_edited_during_the_turn_turns_a_block_into_a_note(ho
     out = hook.handle(event("Stop"))
     assert out is not None and "decision" not in out and "another session edited" in out["systemMessage"]
     hook.handle({"hook_event_name": "SessionEnd", "session_id": "s3", "cwd": str(repo)})
-    with hook._state() as state:
+    with hook.sessions() as state:
         assert "s3" not in state and state["s1"]["open"] is False  # an ended session and a reported turn are closed
 
 
-def test_a_turn_that_ends_without_a_review_is_closed_and_a_stale_one_is_ignored(hooked):
+def test_a_turn_that_ends_without_a_review_is_closed_and_a_stale_one_is_ignored(hooked, freeze_clock):
+    now = datetime(2026, 10, 22, 12, tzinfo=UTC)
+    freeze_clock(now)
     repo, client, event = hooked
-    hook.handle(event("UserPromptSubmit", prompt="qa: off\nchange it"))
-    (repo / "calc.py").write_text("def add(a, b):\n    return 0\n")
+    hook.handle(event("UserPromptSubmit", prompt="change it"))
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")  # the same tree: nothing to judge
     assert hook.handle(event("Stop")) is None
-    with hook._state() as state:
+    with hook.sessions() as state:
         assert state["s1"]["open"] is False
-        state["old"] = {"repo": str(repo), "open": True, "at": "2020-01-01T00:00:00+00:00", "base": "x"}
+        stale = (now - hook.STALE_TURN - timedelta(seconds=1)).isoformat()
+        state["old"] = {"repo": str(repo), "open": True, "at": stale, "base": "x"}
     hook.handle({**event("UserPromptSubmit", prompt="go"), "session_id": "s4"})
-    with hook._state() as state:
-        assert state["s4"]["overlaps"] == []  # a turn open since 2020 never reached its Stop: not an overlap
+    with hook.sessions() as state:
+        assert state["s4"]["overlaps"] == []  # a turn open for longer than STALE_TURN never reached its Stop
 
 
 def test_one_judge_out_keeps_the_other_s_verdict_and_reports_it(hooked, monkeypatch):
@@ -394,7 +399,7 @@ def test_a_turn_started_while_the_last_one_was_judged_keeps_its_own_rounds(hooke
     hook.handle(event("UserPromptSubmit", prompt="change calc"))
     (repo / "calc.py").write_text("def add(a, b):\n    return a - b\n")
     hook.handle(event("Stop"))
-    with hook._state() as state:
+    with hook.sessions() as state:
         assert state["s1"]["rounds"] == 0 and state["s1"]["brief"] == "the next request"
 
 
@@ -404,7 +409,7 @@ def test_reviews_go_to_the_tribunal_s_own_ledger_and_stats_reads_it(repo, capsys
 
     from model_tribunal.paths import LEDGER, home
 
-    review = qa.run_qa(repo, "x", "diff", qa.settings(repo), client=FakeClient(judge={"*": [ko()]}))
+    review = qa.run_qa(repo, "x", diff="diff", seats=qa.settings(repo), client=FakeClient(judge={"*": [ko()]}))
     assert ledger.load(home() / LEDGER)[0]["id"] == review.id
     assert Ledger(router_home() / "ledger.jsonl").tasks() == []  # nothing of the router's is touched
     assert cli.main(["stats"]) == 0
@@ -417,7 +422,7 @@ def test_the_command_judges_texts_reviews_repositories_and_sets_its_judges(repo,
     answer.write_text("The notice.")
     client = FakeClient(judge={"opus/high": [ok("clear")], "fable/medium": [ko("invents a date")],
                                "sonnet/high": [ok("judge A was right")]})
-    monkeypatch.setattr(cli, "_live_client", lambda args: client)
+    monkeypatch.setattr(cli, "live_client", lambda args: client)
     argv = ["judge", "write the notice", "--kind", "write", "--risk", "critical", "--answer", str(answer)]
     assert cli.main(argv) == 0
     out = capsys.readouterr().out

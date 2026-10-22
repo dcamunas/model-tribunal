@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any  # Any: Codex's JSON events, and a test double for subprocess.run
 
-from model_router.catalog import Cell, Usage
+from model_router.catalog import Cell, Usage, nearest_effort
 from model_router.cli_client import DEFAULT_SYSTEM
 from model_router.client import NON_STREAMING_MAX_TOKENS, ClaudeClient, ClientUnavailableError, Completion
 from model_router.task import json_payload
@@ -28,8 +28,6 @@ from pydantic import BaseModel, ValidationError
 from .catalog import EFFORTS, PROVIDER
 from .paths import CODEX_HOME_ENV, config_path, read_config
 
-EFFORT_ORDER = ("low", "medium", "high", "xhigh")
-EFFORT_TO_REASONING: dict[str, str] = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
 TIMEOUT_SECONDS = 900.0
 ERROR_DETAIL_CHARS = 300
 Run = Callable[..., Any]  # subprocess.run or a test double that returns a CompletedProcess
@@ -43,17 +41,6 @@ CODEX_DISABLED = (
 # Kept from `codex exec`: the home decides the account, and an API key or base URL in the environment would move the
 # call to API billing, maybe on another account.
 CODEX_ENV_DROPPED = ("CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL")
-
-
-def reasoning_effort(effort: str, accepted: tuple[str, ...] = EFFORTS) -> str:
-    """Map a cell's effort to what Codex accepts: the same word when it does, else the highest accepted value at
-    or below it, else the lowest it accepts.
-    """
-    want = EFFORT_TO_REASONING[effort]
-    for candidate in reversed(EFFORT_ORDER[: EFFORT_ORDER.index(want) + 1]):
-        if candidate in accepted:
-            return candidate
-    return accepted[0]
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -160,16 +147,16 @@ class CodexClient:
         max_tokens: int = NON_STREAMING_MAX_TOKENS,  # noqa: ARG002 - the CLI manages output length itself
         output_format: type[BaseModel] | None = None,
     ) -> Completion:
-        text, usage, seconds = self._exec(cell, prompt, system, output_format)
+        text, usage, seconds = self._exec(cell, prompt=prompt, system=system, output_format=output_format)
         parsed = _structured(text, output_format)
         if output_format is not None and parsed is None:  # once more: the CLI does not always honour the schema
-            text, more, extra = self._exec(cell, prompt, system, output_format)
+            text, more, extra = self._exec(cell, prompt=prompt, system=system, output_format=output_format)
             usage, seconds, parsed = usage + more, seconds + extra, _structured(text, output_format)
         return Completion(text=text, usage=usage, stop_reason="end_turn", model=cell.model, parsed=parsed, seconds=seconds)
 
-    def _exec(self, cell: Cell, prompt: str, system: str | None, output_format: type[BaseModel] | None,
+    def _exec(self, cell: Cell, *, prompt: str, system: str | None, output_format: type[BaseModel] | None,
               ) -> tuple[str, Usage, float]:
-        effort = reasoning_effort(cell.effort)
+        effort = nearest_effort(cell.effort, EFFORTS)
         with tempfile.TemporaryDirectory(prefix="tribunal-codex-") as scratch:
             last = Path(scratch) / "last-message.md"
             args = [self.binary, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
@@ -182,7 +169,7 @@ class CodexClient:
             args.append("-")
             env = {k: v for k, v in os.environ.items() if k not in CODEX_ENV_DROPPED}
             env["CODEX_HOME"] = str(self.home)
-            t0 = time.monotonic()
+            started = time.monotonic()
             try:
                 proc = self.run(args, input=f"{system or DEFAULT_SYSTEM}\n\n{prompt}", capture_output=True, text=True,
                                 env=env, cwd=scratch, timeout=self.timeout, check=False)
@@ -190,7 +177,7 @@ class CodexClient:
                 raise ClientUnavailableError(f"codex exec exceeded {self.timeout:.0f}s") from exc
             except OSError as exc:
                 raise ClientUnavailableError(f"codex exec could not start: {exc}") from exc
-            seconds = time.monotonic() - t0
+            seconds = time.monotonic() - started
             events = _events(proc.stdout or "")
             errors = _codex_errors(events)
             if proc.returncode != 0:
@@ -238,10 +225,10 @@ def _codex_usage(events: list[dict[str, Any]]) -> Usage:
     for event in events:
         if event.get("type") != "turn.completed":
             continue
-        u = _dict(event.get("usage"))
-        cached = int(u.get("cached_input_tokens") or 0)
-        usage = usage + Usage(input_tokens=max(0, int(u.get("input_tokens") or 0) - cached),
-                              output_tokens=int(u.get("output_tokens") or 0), cache_read_tokens=cached)
+        counted = _dict(event.get("usage"))
+        cached = int(counted.get("cached_input_tokens") or 0)
+        usage = usage + Usage(input_tokens=max(0, int(counted.get("input_tokens") or 0) - cached),
+                              output_tokens=int(counted.get("output_tokens") or 0), cache_read_tokens=cached)
     return usage
 
 

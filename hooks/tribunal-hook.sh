@@ -10,8 +10,8 @@
 set -u
 PATH="${PATH:-}:/usr/bin:/bin"  # sed, cat and mkdir, whatever environment Claude Code was started from
 
-if [ "${MODEL_TRIBUNAL:-}" = "0" ]; then
-    exit 0
+if [ "${MODEL_TRIBUNAL:-}" = "0" ] || [ "${MODEL_ROUTER_CHILD:-}" = "1" ]; then
+    exit 0  # off, or a session the router started itself (a worker, a judge): never a person's turn
 fi
 root="${CLAUDE_PLUGIN_ROOT:-}"
 data="${CLAUDE_PLUGIN_DATA:-}"

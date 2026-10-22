@@ -66,10 +66,10 @@ def test_a_name_another_model_holds_is_kept_apart_and_every_proposal_parses():
 
 
 def test_price_note_flags_a_declared_price_that_is_not_the_list_one():
-    assert price_note("gpt-6-luna", 0.10, 0.50) is None
-    note = price_note("gpt-6-luna", 2.5, 12.5)
+    assert price_note("gpt-6-luna", price_in=0.10, price_out=0.50) is None
+    note = price_note("gpt-6-luna", price_in=2.5, price_out=12.5)
     assert note is not None and "declared at 2.5/12.5, OpenAI lists 0.1/0.5" in note
-    assert price_note("deepseek-reasoner", 1, 2) is None  # not an OpenAI model the tribunal knows a price for
+    assert price_note("deepseek-reasoner", price_in=1, price_out=2) is None  # not an OpenAI model the tribunal knows a price for
 
 
 def test_declarations_register_codex_models_apart_from_claude_s_and_are_validated():

@@ -43,8 +43,10 @@ def parse_declaration(text: str) -> tuple[str, ModelSpec | None]:
     if taken is not None and taken.short != name:
         raise ValueError(f"{model_id!r} is already declared as {taken.short!r}; one declaration per model id")
     cost_in, cost_out = float(price_in), float(price_out)
-    return name, ModelSpec(model_id, name, int(tier) if tier else DEFAULT_TIER, cost_in, cost_out, cost_in, cost_in,
-                           "medium", False, provider=PROVIDER, efforts=EFFORTS)
+    # cached tokens are priced at the input rate: Codex reports them, OpenAI's list has no separate price for them
+    return name, ModelSpec(id=model_id, short=name, tier=int(tier) if tier else DEFAULT_TIER, input=cost_in,
+                           output=cost_out, cache_read=cost_in, cache_write=cost_in, default_effort="medium",
+                           server_fallbacks=False, provider=PROVIDER, efforts=EFFORTS)
 
 
 def as_declaration(name: str, entry: dict[str, Any]) -> str:

@@ -6,7 +6,7 @@ judges' names and decides for itself. One judge that cannot be reached is a judg
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any  # Any: rulings are written out as JSON
 
 from model_router.catalog import Cell, Usage
@@ -26,7 +26,7 @@ ARBITER = "arbiter"  # the role of the arbiter's verdict in the record
 SEATS = "AB"  # how the judges are named to the arbiter
 
 
-def arbiter_prompt(task: Task, answer: str, verdicts: list[JudgeVerdict]) -> str:
+def arbiter_prompt(task: Task, answer: str, *, verdicts: list[JudgeVerdict]) -> str:
     """Build the arbiter's prompt: the judge prompt plus both verdicts, anonymised as judge A and judge B."""
     lines = [f"Judge {letter} {'passed' if v.passed else 'failed'} the answer: {v.reason}"
              for letter, v in zip(SEATS, verdicts, strict=False)]
@@ -87,7 +87,7 @@ class Tribunal:
         if len(self.judges) == 1:  # nothing to agree on: one judge decides and says so
             return _from(self.verifier.ask(task, answer, self.judges[0]))
         with ThreadPoolExecutor(max_workers=len(self.judges)) as pool:
-            asked = list(pool.map(lambda cell: self._ask_or_error(task, answer, cell), self.judges))
+            asked = list(pool.map(lambda cell: self._ask_or_error(task, answer, cell=cell), self.judges))
         usage = Usage()
         for r in asked:
             usage = usage + r.usage
@@ -96,34 +96,38 @@ class Tribunal:
         names = " + ".join(map(str, cells))
         verdicts = [v for r in asked for v in r.verdicts]
         broken = next((r for r in asked if r.source == "judge-error"), None)
+        heard = Ruling(passed=False, source="tribunal", reason="", cell=asked[-1].cell, usage=usage, cost_usd=cost,
+                       confidence=min((r.confidence for r in asked if r.confidence is not None), default=None),
+                       judges=cells, verdicts=verdicts)
         if broken is not None:
-            return Ruling(False, "judge-error", f"tribunal ({names}): {broken.reason}", broken.cell, usage, cost, None,
-                          cells, verdicts)
-        confidences = [r.confidence for r in asked if r.confidence is not None]
+            return replace(heard, source="judge-error", reason=f"tribunal ({names}): {broken.reason}", cell=broken.cell,
+                           confidence=None)
         if len({r.passed for r in asked}) == 1:
-            reason = f"tribunal agreed ({names}): " + " | ".join(r.reason for r in asked)
-            return Ruling(asked[0].passed, "tribunal", reason, asked[-1].cell, usage, cost, min(confidences, default=None),
-                          cells, verdicts)
+            return replace(heard, passed=asked[0].passed,
+                           reason=f"tribunal agreed ({names}): " + " | ".join(r.reason for r in asked))
+        return self._settle(task, answer, asked=asked, heard=heard)
+
+    def _settle(self, task: Task, answer: str, *, asked: list[VerifyResult], heard: Ruling) -> Ruling:
+        """Return the ruling on a split: the arbiter's, or a fail when there is no arbiter or it gave no verdict."""
         passed_by = ", ".join(str(r.cell) for r in asked if r.passed)
         failed_by = ", ".join(str(r.cell) for r in asked if not r.passed)
         split = f"tribunal split: {passed_by} passed, {failed_by} failed"
         if self.arbiter is None:
-            reason = f"{split}; no arbiter available: " + " | ".join(r.reason for r in asked if not r.passed)
-            return Ruling(False, "tribunal", reason, asked[-1].cell, usage, cost, min(confidences, default=None), cells,
-                          verdicts)
-        ruling = self.verifier.ask(task, answer, self.arbiter, prompt=arbiter_prompt(task, answer, verdicts),
+            return replace(heard, reason=f"{split}; no arbiter available: "
+                           + " | ".join(r.reason for r in asked if not r.passed))
+        ruling = self.verifier.ask(task, answer, self.arbiter, prompt=arbiter_prompt(task, answer, verdicts=heard.verdicts),
                                    system=self.arbiter_system, role=ARBITER)
-        usage, cost = usage + ruling.usage, cost + ruling.cost_usd
-        verdicts += ruling.verdicts
+        settled = replace(heard, cell=self.arbiter, usage=heard.usage + ruling.usage,
+                          cost_usd=heard.cost_usd + ruling.cost_usd, verdicts=[*heard.verdicts, *ruling.verdicts],
+                          arbiter=self.arbiter)
         if ruling.source == "judge-error":
-            return Ruling(False, "judge-error", f"{split}; arbiter {self.arbiter}: {ruling.reason}", self.arbiter, usage,
-                          cost, None, cells, verdicts, self.arbiter)
+            return replace(settled, source="judge-error", reason=f"{split}; arbiter {self.arbiter}: {ruling.reason}",
+                           confidence=None)
         sided = ", ".join(str(r.cell) for r in asked if r.passed == ruling.passed)
-        reason = f"{split}; arbiter {self.arbiter} sided with {sided}: {ruling.reason}"
-        return Ruling(ruling.passed, "tribunal", reason, self.arbiter, usage, cost, ruling.confidence, cells, verdicts,
-                      self.arbiter)
+        return replace(settled, passed=ruling.passed, confidence=ruling.confidence,
+                       reason=f"{split}; arbiter {self.arbiter} sided with {sided}: {ruling.reason}")
 
-    def _ask_or_error(self, task: Task, answer: str, cell: Cell) -> VerifyResult:
+    def _ask_or_error(self, task: Task, answer: str, *, cell: Cell) -> VerifyResult:
         """Ask one judge; a judge that cannot be reached becomes a judge error, so the other judge's verdict and
         cost are kept instead of thrown away with the exception.
         """
@@ -136,5 +140,5 @@ class Tribunal:
 def _from(result: VerifyResult) -> Ruling:
     source = "judge-error" if result.source == "judge-error" else "tribunal"
     reason = result.reason if source == "judge-error" else f"one judge ({result.cell}): {result.reason}"
-    return Ruling(result.passed, source, reason, result.cell, result.usage, result.cost_usd, result.confidence,
-                  result.judges, result.verdicts)
+    return Ruling(passed=result.passed, source=source, reason=reason, cell=result.cell, usage=result.usage,
+                  cost_usd=result.cost_usd, confidence=result.confidence, judges=result.judges, verdicts=result.verdicts)

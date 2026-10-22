@@ -16,7 +16,8 @@ from typing import Any  # Any: config.json, decoded
 
 from model_router.catalog import ModelSpec, UnknownModelError, parse_cell
 from model_router.classify import classify_rules
-from model_router.client import ClaudeClient, ClientUnavailableError
+from model_router.cli_client import CliClient
+from model_router.client import ClaudeClient, ClientUnavailableError, LiveClient
 from model_router.paths import CONFIG_DIR_ENV
 from model_router.task import KINDS, RISKS, Task
 
@@ -27,7 +28,7 @@ from .codex_models import OPENAI_PRICES_DATE, Proposal, listed_models, price_not
 from .paths import CODEX_HOME_ENV, LEDGER, config_path, home, read_config, save_config, write_config
 
 CELL_SETTINGS = ("claude", "codex", "arbiter")
-EXIT = {"pass": 0, "fail": 1, "error": 2}  # pass, fail, could not judge
+EXIT = {"pass": 0, "fail": 1, "error": 2}
 
 
 def _cmd_qa(args: argparse.Namespace) -> int:
@@ -35,15 +36,15 @@ def _cmd_qa(args: argparse.Namespace) -> int:
     if repo is None:
         return _cannot(f"not a git repository: {args.repo or Path.cwd()}")
     brief = args.brief_file.read_text(encoding="utf-8") if args.brief_file else (args.brief or "")
-    s = qa.settings(repo, brief)
+    seats = qa.settings(repo, brief)
     try:
         base = qa.tree_of(repo, args.base)
-    except RuntimeError as exc:
+    except qa.GitError as exc:
         return _cannot(f"cannot measure the change from {args.base!r}: {exc}")
     current = qa.snapshot(repo)
-    files = qa.changed_files(repo, base, current)
-    print(f"tribunal in {repo}: {s.describe()}; {len(files)} files changed since {args.base}")
-    for note in s.notes:
+    files = qa.changed_files(repo, base=base, current=current)
+    print(f"tribunal in {repo}: {seats.describe()}; {len(files)} files changed since {args.base}")
+    for note in seats.notes:
         print(f"  note: {note}")
     if not files:
         print("nothing to judge")
@@ -51,8 +52,8 @@ def _cmd_qa(args: argparse.Namespace) -> int:
     if args.dry_run:
         print("\n".join(f"  {f}" for f in files) + "\ndry run: nothing was called")
         return 0
-    review = qa.run_qa(repo, brief, qa.diff_text(repo, base, current), s,
-                       current_files=qa.files_now(repo, current, files), files=len(files))
+    review = qa.run_qa(repo, brief, diff=qa.diff_text(repo, base=base, current=current), seats=seats,
+                       current_files=qa.files_now(repo, current, files=files), files=len(files))
     return _report(review)
 
 
@@ -66,17 +67,13 @@ def _prompt_from(args: argparse.Namespace) -> str:
     raise SystemExit("no task given: pass it as an argument, with --file or on stdin")
 
 
-def _live_client(args: argparse.Namespace) -> ClaudeClient:
+def live_client(args: argparse.Namespace) -> ClaudeClient:
     """Return the Claude backend `--backend` asks for: the SDK with an API key, or `claude -p` with the account."""
     backend = args.backend
     if backend == "auto":
         backend = "api" if os.environ.get("ANTHROPIC_API_KEY") else "cli"
     if backend == "api":
-        from model_router.client import LiveClient
-
         return LiveClient()
-    from model_router.cli_client import CliClient
-
     config_dir = Path(args.claude_config_dir).expanduser() if args.claude_config_dir else None
     return CliClient(config_dir=config_dir)
 
@@ -86,17 +83,17 @@ def _cmd_judge(args: argparse.Namespace) -> int:
     answer = sys.stdin.read() if args.answer == "-" else Path(args.answer).read_text(encoding="utf-8")
     if not answer.strip():
         return _cannot("the answer is empty")
-    client = MultiClient(_live_client(args))  # Claude cells to Claude, the Codex judge to Codex
+    client = MultiClient(live_client(args))  # Claude cells to Claude, the Codex judge to Codex
     kind, risk = args.kind, args.risk
     if kind is None or risk is None:
-        cls = classify_rules(prompt)
-        kind, risk = kind or cls.kind, risk or cls.risk
-        print(f"classification: {cls.kind} / {cls.risk}  ({cls.reason})")
+        classification = classify_rules(prompt)
+        kind, risk = kind or classification.kind, risk or classification.risk
+        print(f"classification: {classification.kind} / {classification.risk}  ({classification.reason})")
     task = Task(prompt=prompt, kind=kind, risk=risk)
     author = parse_cell(args.cell) if args.cell else None
-    s = qa.resolve(qa.raw_settings(None, prompt), author.spec.short if author else None)  # never the author's model
-    print(f"tribunal: {s.describe()}")
-    review = qa.judge_answer(task, answer, s, client, author=author)
+    seats = qa.resolve(qa.raw_settings(None, prompt), author.spec.short if author else None)  # never the author's model
+    print(f"tribunal: {seats.describe()}")
+    review = qa.judge_answer(task, answer, seats=seats, client=client, author=author)
     if args.json:
         print(json.dumps(review.to_dict(), ensure_ascii=False, indent=1))
         return EXIT[review.status]
@@ -177,13 +174,14 @@ def _cmd_config(args: argparse.Namespace) -> int:
         return _cannot(str(exc))
     shown = ", ".join(f"{k}={v}" for k, v in current.items()) or "defaults"
     try:
-        s = qa.resolve(qa.raw_settings(None))
+        seats = qa.resolve(qa.raw_settings(None))
     except (ValueError, UnknownModelError) as exc:
         print(f"tribunal: the stored settings do not resolve: {exc} ({shown}, in {config_path()}); "
               f"fix them with `tribunal config --KEY default`")
         return 2
-    print(f"tribunal: mode {s.mode}, judges {s.describe()}, {s.rounds} reviews per turn ({shown}, in {config_path()})")
-    for note in s.notes:
+    print(f"tribunal: mode {seats.mode}, judges {seats.describe()}, {seats.rounds} reviews per turn ({shown}, in "
+          f"{config_path()})")
+    for note in seats.notes:
         print(f"  note: {note}")
     for spec in declared_models():
         ok_, line = _declared_check(spec)
@@ -214,7 +212,7 @@ def _declared_check(spec: ModelSpec) -> tuple[bool, str]:
     if signed and known is not None and spec.id not in known:
         return False, head + f"home {home_dir} (via {source}), signed in, but {spec.id} is not among the models it " \
                              f"knows (Codex refreshes that list when it runs; `tribunal config --codex-models` shows it)"
-    note = price_note(spec.id, spec.input, spec.output)
+    note = price_note(spec.id, price_in=spec.input, price_out=spec.output)
     return signed, head + f"home {home_dir} (via {source}), {state}" + (f"; {note}" if note else "")
 
 
