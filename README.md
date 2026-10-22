@@ -26,9 +26,9 @@ Needs Claude Code, [uv](https://docs.astral.sh/uv/) and, for judge B, a Codex ho
 ChatGPT account.
 
 ```bash
-claude plugin marketplace add dcamunas/model-router   # the marketplace that lists the plugin
+claude plugin marketplace add dcamunas/claude-plugins
 claude plugin install tribunal@dcamunas
-uv tool install git+https://github.com/dcamunas/model-tribunal@v0.1.0   # the `tribunal` command
+uv tool install git+https://github.com/dcamunas/model-tribunal@v0.1.1   # the `tribunal` command
 tribunal config --codex-home ~/.codex          # your Codex home; lists its models
 tribunal config --codex-models terra           # the Codex model that judges
 ```

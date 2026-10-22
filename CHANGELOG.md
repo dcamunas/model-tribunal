@@ -2,6 +2,12 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.1.1] - 2026-10-22
+
+### Changed
+
+- The plugin is installed from the marketplace [dcamunas/claude-plugins](https://github.com/dcamunas/claude-plugins).
+
 ## [0.1.0] - 2026-10-22
 
 ### Added

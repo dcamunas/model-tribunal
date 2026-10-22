@@ -1,6 +1,6 @@
 [project]
 name = "model-tribunal"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Claude judge and a Codex judge review each change blind to each other; an arbiter decides when they split."
 readme = "README.md"
 license = "MIT"
