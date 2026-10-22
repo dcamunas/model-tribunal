@@ -2,6 +2,14 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.1.3] - 2026-10-22
+
+### Changed
+
+- Runs on model-router 0.18.0, which knows when a Claude model's usage limit is spent and the exact moment it
+  resets. A seat no longer goes to that model until then: with Fable spent and an Opus chat, judge A is another
+  Claude model. The first review that hits the limit still cannot judge; the ones after it can.
+
 ## [0.1.2] - 2026-10-22
 
 ### Fixed

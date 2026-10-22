@@ -28,7 +28,7 @@ ChatGPT account.
 ```bash
 claude plugin marketplace add dcamunas/claude-plugins
 claude plugin install tribunal@dcamunas
-uv tool install git+https://github.com/dcamunas/model-tribunal@v0.1.2   # the `tribunal` command
+uv tool install git+https://github.com/dcamunas/model-tribunal@v0.1.3   # the `tribunal` command
 tribunal config --codex-home ~/.codex          # your Codex home; lists its models
 tribunal config --codex-models terra           # the Codex model that judges
 ```
