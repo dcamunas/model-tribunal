@@ -37,7 +37,7 @@ newer() {
 # the newer version a later session installed. Going quiet would leave that session unjudged, and building would
 # put the old version back under every newer session: run the environment as it is.
 stale=""
-if [ -x "$hook" ] && [ -n "$installed" ] && [ "$installed" != "$version" ] && ! newer "$version" "$installed"; then
+if [ -n "$version" ] && [ -x "$hook" ] && [ -n "$installed" ] && [ "$installed" != "$version" ] && ! newer "$version" "$installed"; then
     stale=1
     echo "tribunal-hook: this session runs plugin $version, the environment has $installed; a new session uses it" >&2
 fi
