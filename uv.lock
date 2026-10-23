@@ -225,23 +225,10 @@ wheels = [
 [[package]]
 name = "model-router"
 version = "0.20.0"
-source = { editable = "../model-router" }
+source = { git = "https://github.com/dcamunas/model-router?rev=v0.20.0#18407026e5cfa4eb0fcb9543cfb903de3962ea8e" }
 dependencies = [
     { name = "anthropic" },
     { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", specifier = ">=1.0" },
-    { name = "pydantic", specifier = ">=2.9" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pyright", specifier = ">=1.1.414" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "ruff", specifier = ">=0.17.1" },
 ]
 
 [[package]]
@@ -262,7 +249,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "model-router", editable = "../model-router" },
+    { name = "model-router", git = "https://github.com/dcamunas/model-router?rev=v0.20.0" },
     { name = "pydantic", specifier = ">=2.9" },
 ]
 

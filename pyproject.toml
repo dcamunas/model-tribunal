@@ -77,6 +77,3 @@ max-complexity = 10
 venvPath = "."
 venv = ".venv"
 include = ["src", "tests"]
-
-[tool.uv.sources]
-model-router = { path = "../model-router", editable = true }  # until the router's tag is out; the release swaps it back
