@@ -189,6 +189,13 @@ def test_a_judge_error_leaves_the_rounds_and_settings_that_do_not_resolve_are_sa
     assert said is not None and said["systemMessage"].startswith("tribunal: not judged, the settings do not resolve")
 
 
+def test_a_review_quoting_a_unicode_line_separator_stays_in_the_ledger():
+    path = home() / LEDGER
+    ledger.append(path, {"id": "a", "reason": "line\u2028separator\u0085next"})
+    ledger.append(path, {"id": "b", "reason": "plain"})
+    assert [r["id"] for r in ledger.load(path)] == ["a", "b"]
+
+
 def test_rounds_0_means_one_review_and_a_broken_state_entry_is_dropped():
     assert qa.resolve({"rounds": 0}).rounds == 1 and qa.resolve({}).rounds == 2
     path = home() / hook.STATE_FILE
