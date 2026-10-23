@@ -22,6 +22,7 @@ from typing import Any  # Any: Codex's JSON events, and a test double for subpro
 from model_router.catalog import Cell, Usage, nearest_effort
 from model_router.cli_client import DEFAULT_SYSTEM
 from model_router.client import NON_STREAMING_MAX_TOKENS, ClaudeClient, ClientUnavailableError, Completion
+from model_router.paths import parse_jsonl
 from model_router.task import json_payload
 from pydantic import BaseModel, ValidationError
 
@@ -38,8 +39,8 @@ CODEX_DISABLED = (
     "in_app_browser", "computer_use", "apps", "image_generation", "js_repl", "code_mode_host", "goals", "plugins",
     "plugin_hooks", "tool_search", "search_tool",
 )
-# Kept from `codex exec`: the home decides the account, and an API key or base URL in the environment would move the
-# call to API billing, maybe on another account.
+# Dropped from the environment of `codex exec`: the home decides the account, and an API key or base URL there
+# would move the call to API billing, maybe on another account.
 CODEX_ENV_DROPPED = ("CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL")
 
 
@@ -105,19 +106,6 @@ def _find(binary: str, hint: str) -> str:
     return path
 
 
-def _events(stdout: str) -> list[dict[str, Any]]:
-    """Parse the JSONL events `codex exec --json` prints; lines that are not JSON objects are skipped."""
-    out: list[dict[str, Any]] = []
-    for line in stdout.splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(event, dict):
-            out.append(event)
-    return out
-
-
 class CodexClient:
     """Completions through `codex exec`: ChatGPT by subscription. Satisfies the router's `ClaudeClient` protocol. The
     prompt goes on stdin with the instructions in front (the CLI has no system prompt); a structured answer is
@@ -173,7 +161,7 @@ class CodexClient:
             except OSError as exc:
                 raise ClientUnavailableError(f"codex exec could not start: {exc}") from exc
             seconds = time.monotonic() - started
-            events = _events(proc.stdout or "")
+            events = parse_jsonl(proc.stdout or "")
             errors = _codex_errors(events)
             if proc.returncode != 0:
                 # never stdout: it carries the answer, and this text ends in the ledger
@@ -199,7 +187,7 @@ def _codex_errors(events: list[dict[str, Any]]) -> list[str]:
     for event in events:
         if event.get("type") in ("error", "turn.failed"):
             error = event.get("error")
-            message = _dict(error).get("message") if isinstance(error, dict) else error
+            message = error.get("message") if isinstance(error, dict) else error
             out.append(str(message or event.get("message") or event))
     return out
 

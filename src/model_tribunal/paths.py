@@ -2,9 +2,9 @@
 
 State lives in the Claude profile in use, `<profile>/model-tribunal`, where the profile is $CLAUDE_CONFIG_DIR or
 ~/.claude, so two profiles on one machine never share judges, Codex home or reviews. It holds `config.json` with
-the judges, the Codex home and the declared Codex models (`tribunal config`), `ledger.jsonl` with every review,
-and the hook's state. The router's own state (its models, its limits) stays in the router's folder and is read
-through the router's API.
+the mode, the seats and the rounds, the Codex home and the declared Codex models (`tribunal config`),
+`ledger.jsonl` with every review, and the hook's state. The router's own state (its models, its limits) stays
+in the router's folder and is read through the router's API.
 """
 
 from __future__ import annotations

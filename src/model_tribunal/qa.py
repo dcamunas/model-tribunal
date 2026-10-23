@@ -28,6 +28,7 @@ from typing import Any  # Any: decoded JSON: config, repository settings and rev
 
 from model_router import clock
 from model_router.catalog import MODELS, Cell, available_models, nearest_available, nearest_effort, parse_cell
+from model_router.classify import head
 from model_router.cli_client import CliClient
 from model_router.client import ClaudeClient, ClientUnavailableError
 from model_router.paths import read_json
@@ -56,7 +57,6 @@ MAX_DIFF_CHARS = 30_000  # the judges see the diff up to here (and the list of e
 MAX_FILES_CHARS = 25_000  # then the changed files as they are now, up to here in all
 MAX_FILE_CHARS = 12_000  # and each one up to here
 DECLARED_QA = re.compile(r"(?:^|[\s,;(\[])qa\s*[:=]\s*(off|final)(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
-BRIEF_HEAD_LINES = 2  # where a brief's `qa:` line counts, as the router's declarations do
 DEFAULT_AUTHOR = "opus/medium"  # the cell recorded as the author when the chat's model is unknown
 AUTHOR_EFFORT = "medium"  # the effort recorded for the chat's model, which no hook can read
 RECORD_ID_BYTES = 6
@@ -146,9 +146,10 @@ class Review:
 
 
 def declared_mode(brief: str) -> str | None:
-    """Return the mode the first two non-empty lines of `brief` declare (`qa: off` or `qa: final`), else None."""
-    head = "\n".join([line for line in brief.splitlines() if line.strip()][:BRIEF_HEAD_LINES])
-    match = DECLARED_QA.search(head)
+    """Return the mode the first lines of `brief` declare (`qa: off` or `qa: final`), where the router reads its own
+    declarations, else None.
+    """
+    match = DECLARED_QA.search(head(brief))
     return match.group(1).lower() if match else None
 
 

@@ -7,6 +7,7 @@
 # events never build: with no venv they exit quietly, so a turn is never delayed. Any failure exits
 # 0 with a note on stderr: a hook must never block Claude. The event JSON on stdin is passed through
 # to the real hook untouched. MODEL_TRIBUNAL=0 turns the hook off.
+# The bootstrap is model-router's hooks/router-hook.sh with the names changed: a fix in one goes to the other.
 set -u
 PATH="${PATH:-}:/usr/bin:/bin"  # sed, cat and mkdir, whatever environment Claude Code was started from
 

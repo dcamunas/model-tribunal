@@ -5,22 +5,20 @@ often the arbiter backed it on a split).
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any  # Any: ledger records are JSON lines
 
 from model_router.fmt import money, table
-from model_router.paths import locked, read_jsonl
+from model_router.paths import append_jsonl, read_jsonl
 
-from .verify import ARBITER
+from .verify import ARBITER, SEATS
 
 
 def append(path: Path, record: dict[str, Any]) -> None:
     """Append `record` as one JSON line to `path`, under a lock, creating the directory."""
-    with locked(path), path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    append_jsonl(path, record)
 
 
 def load(path: Path) -> list[dict[str, Any]]:
@@ -89,7 +87,7 @@ def scoreboard(records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
             row = board[str(v["cell"])]
             row["verdicts"] += 1
             row["passes"] += bool(v.get("passed"))
-        if len(judges) == 2:
+        if len(judges) == len(SEATS):  # two judges, so agreeing or splitting means something
             same = bool(judges[0].get("passed")) == bool(judges[1].get("passed"))
             for v in judges:
                 board[str(v["cell"])]["agreed" if same else "split"] += 1

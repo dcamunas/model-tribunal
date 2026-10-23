@@ -37,7 +37,7 @@ from typing import Any  # Any: hook events and the hook's state are decoded JSON
 
 from model_router import clock
 from model_router.hook import main_model
-from model_router.paths import CHILD_ENV, locked, read_json, read_jsonl, replace_file
+from model_router.paths import is_child, locked, read_json, read_jsonl, replace_file
 
 from .catalog import load_declared
 from .paths import OFF_ENV, home, read_config
@@ -234,7 +234,7 @@ def _stale(at: str) -> bool:
 
 def skipped() -> bool:
     """Say whether this process must not judge: the tribunal is off, or the session is one the router started."""
-    return os.environ.get(OFF_ENV) == "0" or os.environ.get(CHILD_ENV) == "1"
+    return os.environ.get(OFF_ENV) == "0" or is_child()
 
 
 def handle(event: dict[str, Any]) -> dict[str, Any] | None:

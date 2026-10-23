@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -185,7 +186,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
-def _rounds(text: str) -> str:
+def _rounds_arg(text: str) -> str:
     if text.lower() != "default" and (not text.isdigit() or not 1 <= int(text) <= qa.MAX_ROUNDS):
         raise argparse.ArgumentTypeError(f"a whole number from 1 to {qa.MAX_ROUNDS}, or default")
     return text
@@ -328,8 +329,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "declare those")
     sc.add_argument("--declare", action="append", metavar="NAME=codex/MODEL_ID@IN/OUT[/TIER]",
                     help="declare a Codex model by hand (prices in USD per million tokens); NAME= removes it")
-    sc.add_argument("--rounds", type=_rounds, help=f"reviews per turn, 1 to {qa.MAX_ROUNDS}: a fail goes back to Claude until "
-                                                   "the last review, whose fail is reported to you (default 2)")
+    sc.add_argument("--rounds", type=_rounds_arg, help=f"reviews per turn, 1 to {qa.MAX_ROUNDS}: a fail goes back to "
+                                                       "Claude until the last review, whose fail is reported to you (default 2)")
     sc.set_defaults(func=_cmd_config)
 
     ss = sub.add_parser("stats", help="the reviews so far and the judges' scoreboard")
@@ -343,7 +344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         load_declared(read_config())
         return int(args.func(args))
-    except (UnknownModelError, ValueError, ClientUnavailableError, OSError, RuntimeError) as exc:
+    except (ValueError, OSError, ClientUnavailableError, qa.GitError, subprocess.TimeoutExpired) as exc:
         print(f"tribunal: {exc}", file=sys.stderr)
         return 2
 

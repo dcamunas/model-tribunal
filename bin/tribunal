@@ -6,6 +6,7 @@
 # directory comes from CLAUDE_PLUGIN_DATA when Claude Code sets it, else from where Claude Code caches a
 # marketplace plugin: <profile>/plugins/cache/<marketplace>/<plugin>/<version> keeps its data in
 # <profile>/plugins/data/<plugin>-<marketplace>. A plugin loaded from a folder (--plugin-dir) uses its .venv.
+# The same script as model-router's bin/router with the names changed: a fix in one goes to the other.
 set -u
 self=$0
 while [ -L "$self" ]; do  # called through a link: find the real file, whose folder says where the plugin is

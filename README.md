@@ -82,7 +82,7 @@ The full rules and the settings: [Judges and arbiter](docs/judges.md) and
 | Review a branch or a text from a terminal, and see the scoreboard | [Command line](docs/cli.md) |
 | Know which model sits where, and why not a council | [Judges and arbiter](docs/judges.md) |
 | Know what Codex can read and what leaves my machine | [What reaches Codex](docs/privacy.md) |
-| Pick the models and the Claude profile the engine uses | [model-router](https://github.com/dcamunas/model-router) |
+| Pick the models the engine may use | [model-router](https://github.com/dcamunas/model-router) |
 | See what changed in each version | [CHANGELOG](CHANGELOG.md) |
 
 ## Limits
