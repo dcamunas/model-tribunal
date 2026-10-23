@@ -29,7 +29,9 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
 
 ### Removed
 
-- `qa: parallel`, a mode that was never built and ran as `final`.
+- `qa: parallel`, a mode that was never built and ran as `final`. A stored `mode: parallel` now stops the review
+  with a notice: `tribunal config --mode default` fixes the machine's, and a repository's `.claude/tribunal.json`
+  needs `"final"` by hand.
 - `MODEL_TRIBUNAL_HOME`, `MODEL_TRIBUNAL_CODEX_HOME` and `--claude-config-dir`: the state lives in the Claude
   profile in use, the Codex home in `config.json` (`tribunal config --codex-home`), and `tribunal judge` uses
   the profile in use.

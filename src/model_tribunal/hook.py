@@ -147,19 +147,21 @@ def _judge_turn(event: dict[str, Any], *, turn: dict[str, Any], others: dict[str
     chat = main_model(event.get("transcript_path"))
     try:
         seats = resolve(turn.get("settings") or raw_settings(repo, turn.get("brief", "")), chat)
+        if seats.mode == "off":
+            return None
         current = snapshot(repo)
+        files = changed_files(repo, base=turn["base"], current=current)
+        if not files or only_docs(files) or current == turn.get("judged") or turn["rounds"] >= seats.rounds:
+            return None  # nothing new to judge, or the last review's fail was already reported
+        diff, shown = diff_text(repo, base=turn["base"], current=current), files_now(repo, current, files=files)
     except ValueError as exc:  # UnknownModelError too: settings no judge can sit by
         return {"systemMessage": f"tribunal: not judged, the settings do not resolve: {str(exc)[:MAX_ERROR_CHARS]}; "
                                  "`tribunal config` shows them"}
     except (GitError, subprocess.TimeoutExpired) as exc:
-        return {"systemMessage": f"tribunal: not judged, git could not snapshot {repo.name}: {str(exc)[:MAX_ERROR_CHARS]}"}
-    if seats.mode == "off":
-        return None
-    files = changed_files(repo, base=turn["base"], current=current)
-    if not files or only_docs(files) or current == turn.get("judged") or turn["rounds"] >= seats.rounds:
-        return None  # nothing new to judge, or the last review's fail was already reported
-    review = run_qa(repo, turn.get("brief", ""), diff=diff_text(repo, base=turn["base"], current=current), seats=seats,
-                    author=chat_cell(chat), current_files=files_now(repo, current, files=files), files=len(files))
+        return {"systemMessage": f"tribunal: not judged, git could not read the change in {repo.name}: "
+                                 f"{str(exc)[:MAX_ERROR_CHARS]}"}
+    review = run_qa(repo, turn.get("brief", ""), diff=diff, seats=seats, author=chat_cell(chat), current_files=shown,
+                    files=len(files))
     rounds = turn["rounds"] + (review.status != "error")
     with sessions() as state:
         if state.get(session, {}).get("base") == turn["base"] and review.status != "error":  # not a newer turn
@@ -211,7 +213,7 @@ def _edited_since(transcript: str, since: str) -> bool:
     unreadable transcript counts as edited: when in doubt, a fail is reported rather than sent back.
     """
     path = Path(transcript)
-    if not path.is_file():
+    if not path.is_file() or not os.access(path, os.R_OK):
         return True
     start = clock.parse_moment(since)
     for entry in read_jsonl(path):
