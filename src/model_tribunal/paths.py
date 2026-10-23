@@ -1,8 +1,10 @@
 """Where the tribunal keeps its state and the environment variables that configure it.
 
-State lives in ~/.model-tribunal (MODEL_TRIBUNAL_HOME moves it): `config.json` with the judges, the Codex home
-and the declared Codex models (`tribunal config`), `ledger.jsonl` with every review, and the hook's state. The
-router's own state (its profile, its models) stays in the router's home and is read through the router's API.
+State lives in the Claude profile in use, `<profile>/model-tribunal`, where the profile is $CLAUDE_CONFIG_DIR or
+~/.claude, so two profiles on one machine never share judges, Codex home or reviews. MODEL_TRIBUNAL_HOME moves
+it. It holds `config.json` with the judges, the Codex home and the declared Codex models (`tribunal config`),
+`ledger.jsonl` with every review, and the hook's state. The router's own state (its profile, its models) stays
+in the router's folder and is read through the router's API.
 """
 
 from __future__ import annotations
@@ -12,15 +14,29 @@ import os
 from pathlib import Path
 from typing import Any  # Any: config.json, decoded
 
+from model_router.paths import claude_profile
+
 HOME_ENV = "MODEL_TRIBUNAL_HOME"
 OFF_ENV = "MODEL_TRIBUNAL"  # "0" turns the hook off for a session; the judges' own sessions carry it too
 CODEX_HOME_ENV = "MODEL_TRIBUNAL_CODEX_HOME"  # the Codex home (ChatGPT account) the judge runs on; never the ambient ~/.codex
 LEDGER = "ledger.jsonl"
+LEGACY_HOME = "~/.model-tribunal"  # where every profile shared its state before 0.1.4
 
 
 def home() -> Path:
-    """Return the state directory: $MODEL_TRIBUNAL_HOME or ~/.model-tribunal."""
-    return Path(os.environ.get(HOME_ENV, "~/.model-tribunal")).expanduser()
+    """Return the state directory: $MODEL_TRIBUNAL_HOME, else `model-tribunal` inside the Claude profile in use."""
+    value = os.environ.get(HOME_ENV)
+    return Path(value).expanduser() if value else claude_profile() / "model-tribunal"
+
+
+def legacy_note() -> str | None:
+    """Return what to do with the folder every profile shared before 0.1.4, while it is still there; else None."""
+    legacy = Path(LEGACY_HOME).expanduser()
+    if os.environ.get(HOME_ENV) or not legacy.is_dir() or legacy.resolve() == home().resolve():
+        return None
+    how = f"`mv {legacy} {home()}`" if not home().exists() else f"merge it by hand into {home()}, which exists already"
+    return (f"{legacy} is no longer read (state is per Claude profile): move it into the profile it belongs to, "
+            f"for this one {how}")
 
 
 def config_path() -> Path:

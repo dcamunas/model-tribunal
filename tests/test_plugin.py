@@ -66,4 +66,3 @@ def test_a_session_older_than_the_environment_runs_it_and_never_downgrades(tmp_p
     assert proc.returncode == 0 and proc.stdout == "ran\n" and "a new session uses it" in proc.stderr
     proc = _run({"hook_event_name": "SessionStart"}, "--bootstrap", env=env)
     assert proc.returncode == 0 and (data / "installed-version").read_text() == "999.0.0"  # nothing reinstalled
-

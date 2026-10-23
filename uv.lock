@@ -224,8 +224,8 @@ wheels = [
 
 [[package]]
 name = "model-router"
-version = "0.18.0"
-source = { git = "https://github.com/dcamunas/model-router?rev=v0.18.0#44e4cbb14487a554c115ca87f7dfd1801170486f" }
+version = "0.19.0"
+source = { git = "https://github.com/dcamunas/model-router?rev=v0.19.0#c8e558c454a6af698281be782199ff72fd932837" }
 dependencies = [
     { name = "anthropic" },
     { name = "pydantic" },
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "model-tribunal"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "model-router" },
@@ -250,7 +250,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "model-router", git = "https://github.com/dcamunas/model-router?rev=v0.18.0" },
+    { name = "model-router", git = "https://github.com/dcamunas/model-router?rev=v0.19.0" },
     { name = "pydantic", specifier = ">=2.9" },
 ]
 

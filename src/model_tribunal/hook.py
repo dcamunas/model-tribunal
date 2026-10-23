@@ -37,7 +37,7 @@ from model_router.hook import main_model
 from model_router.paths import CHILD_ENV
 
 from .catalog import load_declared
-from .paths import OFF_ENV, home, read_config
+from .paths import OFF_ENV, home, legacy_note, read_config
 from .qa import (
     MAX_BRIEF_CHARS,
     changed_files,
@@ -231,6 +231,8 @@ def handle(event: dict[str, Any]) -> dict[str, Any] | None:
         return on_stop(event)
     elif name == "SessionEnd":
         on_session_end(event)
+    elif name == "SessionStart" and (note := legacy_note()):
+        return {"systemMessage": f"tribunal: {note}"}
     return None
 
 

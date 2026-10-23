@@ -25,7 +25,7 @@ from . import ledger, qa
 from .catalog import MODELS_KEY, declared_models, load_declared, parse_declaration
 from .codex import MultiClient, resolve_codex_home
 from .codex_models import OPENAI_PRICES_DATE, Proposal, listed_models, price_note, propose
-from .paths import CODEX_HOME_ENV, LEDGER, config_path, home, read_config, save_config, write_config
+from .paths import CODEX_HOME_ENV, LEDGER, config_path, home, legacy_note, read_config, save_config, write_config
 
 CELL_SETTINGS = ("claude", "codex", "arbiter")
 EXIT = {"pass": 0, "fail": 1, "error": 2}
@@ -181,7 +181,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
         return 2
     print(f"tribunal: mode {seats.mode}, judges {seats.describe()}, {seats.rounds} reviews per turn ({shown}, in "
           f"{config_path()})")
-    for note in seats.notes:
+    for note in [*seats.notes, *filter(None, [legacy_note()])]:
         print(f"  note: {note}")
     for spec in declared_models():
         ok_, line = _declared_check(spec)

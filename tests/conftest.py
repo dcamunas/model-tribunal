@@ -3,7 +3,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _own_state_dirs(tmp_path_factory, monkeypatch):
-    """Keep every test away from ~/.model-tribunal and ~/.model-router: their config and ledgers are the machine's."""
+    """Keep every test away from the machine's tribunal and router state: their config and ledgers are not the suite's."""
     monkeypatch.setenv("MODEL_TRIBUNAL_HOME", str(tmp_path_factory.mktemp("tribunal")))
     monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path_factory.mktemp("router")))
     monkeypatch.delenv("MODEL_TRIBUNAL", raising=False)

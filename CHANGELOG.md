@@ -2,6 +2,24 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.1.4] - 2026-10-23
+
+### Changed
+
+- The state moves from `~/.model-tribunal`, shared by every Claude profile on the machine, to
+  `model-tribunal/` inside the profile in use (`$CLAUDE_CONFIG_DIR`, else `~/.claude`): two profiles no longer
+  share judges, Codex home or reviews. `MODEL_TRIBUNAL_HOME` still moves it.
+- Depends on model-router 0.19.0, which keeps its own state per profile the same way.
+
+### Added
+
+- While `~/.model-tribunal` is still there, the hook says so when a session starts, and `tribunal config` lists
+  it, with how to move it.
+
+Upgrading: move `~/.model-tribunal` into the profile it belongs to before that profile's next session, for
+instance `mv ~/.model-tribunal ~/.claude-personal/model-tribunal`. If the folder already exists, a plain `mv`
+puts the old one inside it; merge by hand instead.
+
 ## [0.1.3] - 2026-10-22
 
 ### Changed
