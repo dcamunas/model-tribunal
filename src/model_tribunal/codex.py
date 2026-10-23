@@ -26,7 +26,7 @@ from model_router.task import json_payload
 from pydantic import BaseModel, ValidationError
 
 from .catalog import EFFORTS, PROVIDER
-from .paths import CODEX_HOME_ENV, config_path, read_config
+from .paths import read_config
 
 TIMEOUT_SECONDS = 900.0
 ERROR_DETAIL_CHARS = 300
@@ -83,24 +83,19 @@ def _structured(text: str, output_format: type[BaseModel] | None) -> BaseModel |
         return None
 
 
-def resolve_codex_home() -> tuple[Path, str]:
-    """Return the Codex home (the ChatGPT account) the judge runs on and where it came from: the
-    MODEL_TRIBUNAL_CODEX_HOME variable, then `codex_home` in config.json (`tribunal config --codex-home`). Nothing
-    else: the ambient ~/.codex may be another account, and the tribunal must never land on it by accident.
+def resolve_codex_home() -> Path:
+    """Return the Codex home (the ChatGPT account) the judge runs on: `codex_home` in config.json (`tribunal config
+    --codex-home`). Nothing else: the ambient ~/.codex may be another account, and the tribunal must never land on
+    it by accident.
 
     Raises:
-        ClientUnavailableError: neither names one.
+        ClientUnavailableError: none is set.
     """
-    value = os.environ.get(CODEX_HOME_ENV)
-    if value:
-        return Path(value).expanduser(), CODEX_HOME_ENV
     value = read_config().get("codex_home")
-    if value:
-        return Path(str(value)).expanduser(), str(config_path())
-    raise ClientUnavailableError(
-        f"Codex home not set: run `tribunal config --codex-home ~/.codex` (a home signed in with the ChatGPT account the "
-        f"tribunal may use) or export {CODEX_HOME_ENV}"
-    )
+    if not value:
+        raise ClientUnavailableError("Codex home not set: run `tribunal config --codex-home ~/.codex` (a home signed in "
+                                     "with the ChatGPT account the tribunal may use)")
+    return Path(str(value)).expanduser()
 
 
 def _find(binary: str, hint: str) -> str:
@@ -238,7 +233,7 @@ def codex_client() -> ClaudeClient:
     Raises:
         ClientUnavailableError: no home is set, it does not exist, or the `codex` executable is missing.
     """
-    return CodexClient(resolve_codex_home()[0])
+    return CodexClient(resolve_codex_home())
 
 
 class MultiClient:

@@ -12,7 +12,7 @@ from typing import Any  # Any: rulings are written out as JSON
 from model_router.catalog import Cell, Usage
 from model_router.client import ClaudeClient, ClientUnavailableError
 from model_router.task import Task
-from model_router.verify import JUDGE_SYSTEM, JudgeVerdict, Verifier, VerifyResult, judge_prompt
+from model_router.verify import JUDGE_SYSTEM, JudgeVerdict, VerifyResult, ask, judge_prompt
 
 ARBITER_SYSTEM = (
     "You are the arbiter of a tribunal. Two independent judges disagree on whether an answer completes a task. "
@@ -24,6 +24,7 @@ ARBITER_SYSTEM = (
 )
 ARBITER = "arbiter"  # the role of the arbiter's verdict in the record
 SEATS = "AB"  # how the judges are named to the arbiter
+MIN_CONFIDENCE = 0.0  # a seat's pass stands however sure it is: the other judge and the arbiter are the check
 
 
 def arbiter_prompt(task: Task, answer: str, *, verdicts: list[JudgeVerdict]) -> str:
@@ -58,25 +59,24 @@ class Ruling:
                 "arbiter": self.arbiter.label if self.arbiter else None}
 
 
-class _NoPolicy:
-    """The router's verifier wants a policy; the tribunal seats its judges itself, so this one is never asked."""
-
-    def judges_for(self, worker: Cell, mode: str) -> list[Cell]:  # noqa: ARG002 - the protocol's shape
-        return []
-
-
 class Tribunal:
     """Two (or more) judges blind to each other and an arbiter on a split, asked through `client`."""
 
     def __init__(self, client: ClaudeClient, *, judges: list[Cell], arbiter: Cell | None,
-                 judge_system: str = JUDGE_SYSTEM, arbiter_system: str = ARBITER_SYSTEM,
-                 min_confidence: float = 0.0) -> None:
+                 judge_system: str = JUDGE_SYSTEM, arbiter_system: str = ARBITER_SYSTEM) -> None:
         if not judges:
             raise ValueError("a tribunal needs at least one judge")
+        self.client = client
         self.judges = judges
         self.arbiter = arbiter
+        self.judge_system = judge_system
         self.arbiter_system = arbiter_system
-        self.verifier = Verifier(client, _NoPolicy(), min_confidence=min_confidence, judge_system=judge_system)
+
+    def _ask(self, task: Task, answer: str, *, cell: Cell, prompt: str | None = None, system: str | None = None,
+             role: str = "judge") -> VerifyResult:
+        """Ask one seat: a judge with the judge instructions, or the arbiter with its own prompt and instructions."""
+        return ask(self.client, task, answer, cell=cell, prompt=prompt, system=system or self.judge_system, role=role,
+                   min_confidence=MIN_CONFIDENCE)
 
     def verify(self, task: Task, answer: str) -> Ruling:
         """Ask every judge at once; return their agreement, the arbiter's ruling on a split, or a judge error.
@@ -85,7 +85,7 @@ class Tribunal:
             ClientUnavailableError: the arbiter could not be reached (a judge that cannot is a judge error).
         """
         if len(self.judges) == 1:  # nothing to agree on: one judge decides and says so
-            return _from(self.verifier.ask(task, answer, self.judges[0]))
+            return _from(self._ask(task, answer, cell=self.judges[0]))
         with ThreadPoolExecutor(max_workers=len(self.judges)) as pool:
             asked = list(pool.map(lambda cell: self._ask_or_error(task, answer, cell=cell), self.judges))
         usage = Usage()
@@ -115,8 +115,8 @@ class Tribunal:
         if self.arbiter is None:
             return replace(heard, reason=f"{split}; no arbiter available: "
                            + " | ".join(r.reason for r in asked if not r.passed))
-        ruling = self.verifier.ask(task, answer, self.arbiter, prompt=arbiter_prompt(task, answer, verdicts=heard.verdicts),
-                                   system=self.arbiter_system, role=ARBITER)
+        ruling = self._ask(task, answer, cell=self.arbiter, prompt=arbiter_prompt(task, answer, verdicts=heard.verdicts),
+                           system=self.arbiter_system, role=ARBITER)
         settled = replace(heard, cell=self.arbiter, usage=heard.usage + ruling.usage,
                           cost_usd=heard.cost_usd + ruling.cost_usd, verdicts=[*heard.verdicts, *ruling.verdicts],
                           arbiter=self.arbiter)
@@ -132,7 +132,7 @@ class Tribunal:
         cost are kept instead of thrown away with the exception.
         """
         try:
-            return self.verifier.ask(task, answer, cell)
+            return self._ask(task, answer, cell=cell)
         except ClientUnavailableError as exc:
             return VerifyResult(False, "judge-error", f"{cell} could not be reached: {exc}", cell, judges=[cell])
 

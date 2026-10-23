@@ -2,6 +2,44 @@
 
 Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.1.5] - 2026-10-23
+
+### Fixed
+
+- Settings that do not resolve (two judges on one model, an arbiter on a judge's model, an unknown cell) used
+  to turn the review off with a line on stderr nobody saw. The turn now ends with a one-line notice, as it does
+  when git cannot snapshot the repository.
+- A judge that could not be reached used up one of the turn's reviews, so the next real fail was reported
+  instead of sent back. An error leaves the count as it was.
+- `rounds: 0` became 2; it is 1 now, the fewest there are.
+- A state file entry that is not an object (a hand edit, a cut write) broke the hook on every turn; it is
+  dropped.
+- `tribunal judge` with no task, and `tribunal config --codex-models` with a name the home does not list, exited
+  1, the code of a failed review. They exit 2, as every other error does.
+- `tribunal config` read a `config.json` that is not a JSON object as empty and wrote over it, losing the
+  declared models and the Codex home. It now refuses and says so.
+- The docs said a session that only reads does not count as editing the repository; a Bash call does count,
+  since a command can write. They say so now.
+
+### Added
+
+- `bin/tribunal`: the plugin brings the `tribunal` command to Claude Code's shell, at the version the plugin
+  pins, so nothing else is installed. In a terminal it is in the plugin's environment
+  (`plugins/data/tribunal-dcamunas/venv/bin/tribunal` inside the profile).
+
+### Removed
+
+- `qa: parallel`, a mode that was never built and ran as `final`.
+- `MODEL_TRIBUNAL_HOME`, `MODEL_TRIBUNAL_CODEX_HOME` and `--claude-config-dir`: the state lives in the Claude
+  profile in use, the Codex home in `config.json` (`tribunal config --codex-home`), and `tribunal judge` uses
+  the profile in use.
+- The notice about the pre-0.1.4 `~/.model-tribunal` folder; session start only builds the environment again.
+
+### Changed
+
+- Depends on model-router 0.20.0 and reuses its helpers: the single-judge `ask`, the lock, the log reader,
+  the atomic writer and the table printer, in place of copies of its own.
+
 ## [0.1.4] - 2026-10-23
 
 ### Changed
@@ -17,7 +55,7 @@ Format from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions f
   it, with how to move it.
 
 Upgrading: move `~/.model-tribunal` into the profile it belongs to before that profile's next session, for
-instance `mv ~/.model-tribunal ~/.claude-personal/model-tribunal`. If the folder already exists, a plain `mv`
+instance `mv ~/.model-tribunal ~/.claude-other/model-tribunal`. If the folder already exists, a plain `mv`
 puts the old one inside it; merge by hand instead.
 
 ## [0.1.3] - 2026-10-22

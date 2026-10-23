@@ -75,4 +75,8 @@ if [ -z "$stale" ] && { [ ! -x "$hook" ] || [ "$installed" != "$version" ]; }; t
     fi
 fi
 
-exec "$hook"  # SessionStart too: nothing to judge yet, but the hook says if old state was left behind
+if [ "${1:-}" = "--bootstrap" ]; then
+    cat >/dev/null  # SessionStart: the environment is ready, nothing to judge yet
+    exit 0
+fi
+exec "$hook"

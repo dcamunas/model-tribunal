@@ -8,14 +8,12 @@ between is still part of the change. The brief is what the developer was asked f
 judged on its own.
 
 Settings come from three places, the later winning: the machine (config.json, `tribunal config`), the
-repository (`.claude/tribunal.json`), and the brief itself (`qa: off|final|parallel` in its first two lines).
-`parallel` (Claude and Codex both building, then comparing) is not built yet and runs as `final`.
+repository (`.claude/tribunal.json`), and the brief itself (`qa: off` or `qa: final` in its first two lines).
 """
 
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import re
 import secrets
@@ -32,6 +30,7 @@ from model_router import clock
 from model_router.catalog import MODELS, Cell, available_models, nearest_available, nearest_effort, parse_cell
 from model_router.cli_client import CliClient
 from model_router.client import ClaudeClient, ClientUnavailableError
+from model_router.paths import read_json
 from model_router.task import Task
 
 from . import ledger
@@ -41,7 +40,7 @@ from .paths import LEDGER, home, read_config
 from .verify import Ruling, Tribunal
 from .version import tribunal_version
 
-MODES = ("off", "final", "parallel")
+MODES = ("off", "final")
 DEFAULTS: dict[str, Any] = {"mode": "final", "claude": "opus/high", "codex": None, "arbiter": None, "rounds": 2}
 SETTING_KEYS = tuple(DEFAULTS)
 REPO_SETTINGS = Path(".claude") / "tribunal.json"
@@ -56,8 +55,10 @@ GIT_TIMEOUT = 120
 MAX_DIFF_CHARS = 30_000  # the judges see the diff up to here (and the list of every changed file)
 MAX_FILES_CHARS = 25_000  # then the changed files as they are now, up to here in all
 MAX_FILE_CHARS = 12_000  # and each one up to here
-DECLARED_QA = re.compile(r"(?:^|[\s,;(\[])qa\s*[:=]\s*(off|final|parallel)(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
+DECLARED_QA = re.compile(r"(?:^|[\s,;(\[])qa\s*[:=]\s*(off|final)(?=\s*(?:$|[,;.)\]]))", re.I | re.M)
+BRIEF_HEAD_LINES = 2  # where a brief's `qa:` line counts, as the router's declarations do
 DEFAULT_AUTHOR = "opus/medium"  # the cell recorded as the author when the chat's model is unknown
+AUTHOR_EFFORT = "medium"  # the effort recorded for the chat's model, which no hook can read
 RECORD_ID_BYTES = 6
 TAG_BYTES = 6  # the random id in the tags around the material, so a diff cannot forge a closing tag
 MAX_ERROR_CHARS = 300  # how much of a git error a message carries
@@ -145,8 +146,8 @@ class Review:
 
 
 def declared_mode(brief: str) -> str | None:
-    """Return the mode the first two non-empty lines of `brief` declare (`qa: off|final|parallel`), else None."""
-    head = "\n".join([line for line in brief.splitlines() if line.strip()][:2])
+    """Return the mode the first two non-empty lines of `brief` declare (`qa: off` or `qa: final`), else None."""
+    head = "\n".join([line for line in brief.splitlines() if line.strip()][:BRIEF_HEAD_LINES])
     match = DECLARED_QA.search(head)
     return match.group(1).lower() if match else None
 
@@ -155,11 +156,7 @@ def repo_settings(repo: Path) -> dict[str, Any]:
     """Return the repository's own settings (`.claude/tribunal.json`), or an empty dict when it has none or it is
     not a JSON object.
     """
-    try:
-        data = json.loads((repo / REPO_SETTINGS).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return read_json(repo / REPO_SETTINGS)
 
 
 def machine_settings() -> dict[str, Any]:
@@ -180,9 +177,9 @@ def raw_settings(repo: Path | None, brief: str = "") -> dict[str, Any]:
     return merged
 
 
-def settings(repo: Path, brief: str = "", *, chat_model: str | None = None) -> Settings:
+def settings(repo: Path, brief: str = "") -> Settings:
     """Resolve the settings for `repo` and `brief` as they stand now (see `raw_settings` and `resolve`)."""
-    return resolve(raw_settings(repo, brief), chat_model)
+    return resolve(raw_settings(repo, brief))
 
 
 def resolve(raw: dict[str, Any], chat_model: str | None = None) -> Settings:
@@ -199,9 +196,6 @@ def resolve(raw: dict[str, Any], chat_model: str | None = None) -> Settings:
     mode = str(raw.get("mode") or DEFAULTS["mode"]).lower()
     if mode not in MODES:
         raise ValueError(f"unknown qa mode {mode!r}; known: {', '.join(MODES)}")
-    if mode == "parallel":
-        notes.append("parallel is not built yet: final QA instead")
-        mode = "final"
     available = available_models()
     fallbacks = [c for c in map(parse_cell, FALLBACK_CLAUDE) if c.model in available]
     chat = {chat_model} if chat_model else set()
@@ -211,28 +205,38 @@ def resolve(raw: dict[str, Any], chat_model: str | None = None) -> Settings:
     if codex is not None and codex.model == claude.model:
         raise ValueError(f"judge B ({codex}) must be on another model than judge A ({claude})")
     if codex is None:
-        second = next((c for c in fallbacks if c.spec.short not in {claude.spec.short} | chat), None)
-        if second is None:
+        codex = next((c for c in fallbacks if c.spec.short not in {claude.spec.short} | chat), None)
+        if codex is None:
             notes.append("no codex model declared and no other Claude model left: one judge, no arbiter")
             return Settings(mode, claude, None, None, _rounds(raw), tuple(notes))
         notes.append("no codex model declared (`tribunal config --codex-models`): a second Claude judge instead")
-        codex = second
+    arbiter = _arbiter(raw, judges={claude.model, codex.model}, fallbacks=fallbacks, chat=chat)
+    return Settings(mode, claude, codex, arbiter, _rounds(raw), tuple(notes))
+
+
+def _arbiter(raw: dict[str, Any], *, judges: set[str], fallbacks: list[Cell], chat: set[str]) -> Cell | None:
+    """Return the arbiter: the configured one, else a Claude model neither judge is on, the chat's own only when
+    nothing else is left; None when no model is left.
+
+    Raises:
+        ValueError: the configured arbiter sits on a judge's model.
+    """
     arbiter = parse_cell(str(raw["arbiter"])) if raw.get("arbiter") else None
-    judges = {claude.model, codex.model}
     if arbiter is not None and arbiter.model in judges:
         raise ValueError(f"the arbiter ({arbiter}) must be on another model than the judges")
-    if arbiter is None:  # a model neither judge is on, the chat's own only when nothing else is left
-        free = [c for c in fallbacks if c.model not in judges]
-        arbiter = next((c for c in free if c.spec.short not in chat), free[0] if free else None)
-    return Settings(mode, claude, codex, arbiter, _rounds(raw), tuple(notes))
+    if arbiter is not None:
+        return arbiter
+    free = [c for c in fallbacks if c.model not in judges]
+    return next((c for c in free if c.spec.short not in chat), free[0] if free else None)
 
 
 def _rounds(raw: dict[str, Any]) -> int:
     """Return how many reviews a turn gets, between 1 and MAX_ROUNDS (a fail goes back to Claude until the last); a
-    value that is not a number counts as the default.
+    value that is not a number, or none, counts as the default, and 0 as 1.
     """
+    value = raw.get("rounds")
     try:
-        rounds = int(raw.get("rounds") or DEFAULTS["rounds"])
+        rounds = int(DEFAULTS["rounds"] if value is None else value)
     except (TypeError, ValueError):
         rounds = int(DEFAULTS["rounds"])
     return min(MAX_ROUNDS, max(1, rounds))
@@ -257,7 +261,7 @@ def _default_codex() -> Cell | None:
 def chat_cell(model: str | None) -> Cell | None:
     """Return the cell recorded as the change's author for the chat model's short name, or None when unknown."""
     spec = next((s for s in MODELS.values() if s.short == model and s.claude), None)
-    return Cell(spec.id, "medium") if spec else None
+    return Cell(spec.id, AUTHOR_EFFORT) if spec else None
 
 
 # ---- git ------------------------------------------------------------------------------------------------------
@@ -374,10 +378,10 @@ def only_docs(files: list[str]) -> bool:
     return bool(files) and all(f.lower().endswith(DOC_SUFFIXES) for f in files)
 
 
-def files_now(repo: Path, tree: str, *, files: list[str], limit: int = MAX_FILES_CHARS) -> str:
+def files_now(repo: Path, tree: str, *, files: list[str]) -> str:
     """Return the changed `files` as they are in `tree`, whole, so a judge that cannot open the repository sees
-    the code around each change: text files only, each up to MAX_FILE_CHARS, all of them up to `limit`, and a
-    note for what is left out. Deleted files are not shown (the diff has them).
+    the code around each change: text files only, each up to MAX_FILE_CHARS, all of them up to MAX_FILES_CHARS, and
+    a note for what is left out. Deleted files are not shown (the diff has them).
     """
     parts, used, left_out = [], 0, []
     for path in files:
@@ -385,7 +389,7 @@ def files_now(repo: Path, tree: str, *, files: list[str], limit: int = MAX_FILES
             text = _git(repo, "show", f"{tree}:{path}")
         except GitError:  # deleted in this change, or a submodule
             continue
-        if "\0" in text or len(text) > MAX_FILE_CHARS or used + len(text) > limit:
+        if "\0" in text or len(text) > MAX_FILE_CHARS or used + len(text) > MAX_FILES_CHARS:
             left_out.append(path)
             continue
         parts.append(f"--- {path} (as it is now)\n{text}")
@@ -420,12 +424,11 @@ def repo_client(repo: Path) -> ClaudeClient:
     the prompt, which carries the diff and the changed files as they are now.
     """
     claude = CliClient(tools=READ_TOOLS, cwd=repo, timeout=JUDGE_TIMEOUT, extra_args=["--setting-sources", "user"])
-    return MultiClient(claude, factory=lambda: CodexClient(resolve_codex_home()[0], timeout=JUDGE_TIMEOUT))
+    return MultiClient(claude, factory=lambda: CodexClient(resolve_codex_home(), timeout=JUDGE_TIMEOUT))
 
 
 def run_qa(repo: Path, brief: str, *, diff: str, seats: Settings, client: ClaudeClient | None = None,
-           ledger_path: Path | None = None, author: Cell | None = None, current_files: str = "",
-           files: int = 0) -> Review:
+           author: Cell | None = None, current_files: str = "", files: int = 0) -> Review:
     """Judge `diff` (with `current_files`, the changed files as they are now, from `files_now`) against `brief`
     with `seats`; record it and return it. `author` is the cell that wrote the change (the chat's model, when
     known); it is recorded, never judged.
@@ -437,21 +440,21 @@ def run_qa(repo: Path, brief: str, *, diff: str, seats: Settings, client: Claude
     tag = f"change-{secrets.token_hex(TAG_BYTES)}"
     material = fit_diff(diff) + (f"\n\n{current_files}" if current_files else "")
     return _review(task, f"<{tag}>\n{material}\n</{tag}>", tribunal=tribunal, seats=seats, what="qa", about=repo.name,
-                   author=author or parse_cell(DEFAULT_AUTHOR), files=files, ledger_path=ledger_path)
+                   author=author or parse_cell(DEFAULT_AUTHOR), files=files)
 
 
-def judge_answer(task: Task, answer: str, *, seats: Settings, client: ClaudeClient, author: Cell | None = None,
-                 ledger_path: Path | None = None) -> Review:
+def judge_answer(task: Task, answer: str, *, seats: Settings, client: ClaudeClient,
+                 author: Cell | None = None) -> Review:
     """Judge a text `answer` to `task` written elsewhere (critical prose, an analysis, a review) with `seats`, no
     repository involved; record it and return it.
     """
     tribunal = Tribunal(client, judges=seats.judges, arbiter=seats.arbiter)
     return _review(task, answer, tribunal=tribunal, seats=seats, what="judge", about=f"{task.kind}/{task.risk}",
-                   author=author or parse_cell(DEFAULT_AUTHOR), ledger_path=ledger_path)
+                   author=author or parse_cell(DEFAULT_AUTHOR))
 
 
 def _review(task: Task, answer: str, *, tribunal: Tribunal, seats: Settings, what: str, about: str, author: Cell,
-            files: int = 0, ledger_path: Path | None) -> Review:
+            files: int = 0) -> Review:
     """Run `tribunal` on `answer` and record the review; a ledger that cannot be written never hides the verdict."""
     started_at = clock.now().isoformat(timespec="seconds")
     started = time.monotonic()
@@ -464,5 +467,5 @@ def _review(task: Task, answer: str, *, tribunal: Tribunal, seats: Settings, wha
                     ruling=ruling, notes=list(seats.notes), files=files, seconds=time.monotonic() - started,
                     version=tribunal_version())
     with contextlib.suppress(OSError):
-        ledger.append(ledger_path or home() / LEDGER, review.to_dict())
+        ledger.append(home() / LEDGER, review.to_dict())
     return review

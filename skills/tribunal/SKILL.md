@@ -8,8 +8,8 @@ description: A Claude judge and a Codex judge, blind to each other, with an arbi
 What already happens on its own: when a turn changes code in a git repository, the plugin's `Stop` hook
 judges that change against the user's request before the turn ends. Two judges read the brief, the diff and
 the changed files, each in its own session, blind to the other: a Claude model other than the one serving
-this chat, which may also read the repository, and a Codex model (ChatGPT), which reads nothing but that. If they disagree, an arbiter reads both verdicts and
-decides. A pass shows one line. A fail comes back to you as the reason to keep working.
+this chat, which may also read the repository, and a Codex model (ChatGPT), which reads nothing but that.
+If they disagree, an arbiter reads both verdicts and decides. A pass shows one line. A fail comes back to you as the reason to keep working.
 
 ## When the tribunal fails your change
 
@@ -30,11 +30,10 @@ decides. A pass shows one line. A fail comes back to you as the reason to keep w
   tribunal judge "the task" --kind write --risk critical --answer text.md   # a text written elsewhere
   ```
 
-  Exit code 0 on a pass or when there is nothing to judge, 1 on a fail, 2 when it could not run.
-  Every verdict goes to the tribunal's ledger, so `tribunal stats` shows the judges' scoreboard.
+  Exit code 0 on a pass or when there is nothing to judge, 1 on a fail, 2 when it could not judge or
+  run. Every verdict goes to the tribunal's ledger, so `tribunal stats` shows the judges' scoreboard.
 
-- Per request: a line `qa: off`, `qa: final` or `qa: parallel` in the first two lines of the request.
-  `parallel` (Claude and Codex both building, then comparing) is not built yet and runs as `final`.
+- Per request: a line `qa: off` or `qa: final` in the first two lines of the request.
 
 ## Settings
 

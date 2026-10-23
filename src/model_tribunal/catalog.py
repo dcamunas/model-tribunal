@@ -18,8 +18,8 @@ from model_router.catalog import MODELS, ModelSpec, register, unregister
 PROVIDER = "codex"
 DEFAULT_TIER = 2  # a declared model whose declaration gives no tier: as capable as Opus
 EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh")  # what Codex accepts
-MIN_TIER, MAX_TIER = 0, 3
-SYNTAX = re.compile(r"^([a-z][a-z0-9-]*)=(?:codex/([^@\s]+)@([0-9.]+)/([0-9.]+)(?:/([0-3]))?)?$")
+MIN_TIER, MAX_TIER = 0, 3  # Haiku's tier to Fable's
+SYNTAX = re.compile(rf"^([a-z][a-z0-9-]*)=(?:codex/([^@\s]+)@([0-9.]+)/([0-9.]+)(?:/([{MIN_TIER}-{MAX_TIER}]))?)?$")
 MODELS_KEY = "models"  # the config.json key the declarations live under
 
 
@@ -31,7 +31,8 @@ def parse_declaration(text: str) -> tuple[str, ModelSpec | None]:
     """
     match = SYNTAX.match(text.strip())
     if match is None:
-        raise ValueError(f"expected NAME=codex/MODEL_ID@INPUT/OUTPUT[/TIER] (TIER 0 to 3; NAME= removes), got {text!r}")
+        raise ValueError(f"expected NAME=codex/MODEL_ID@INPUT/OUTPUT[/TIER] (TIER {MIN_TIER} to {MAX_TIER}; NAME= "
+                         f"removes), got {text!r}")
     name, model_id, price_in, price_out, tier = match.groups()
     if any(spec.short == name and spec.claude for spec in MODELS.values()):
         raise ValueError(f"{name!r} is a Claude model's name; pick another short name")

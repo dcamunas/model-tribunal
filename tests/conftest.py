@@ -2,14 +2,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _own_state_dirs(tmp_path_factory, monkeypatch):
-    """Keep every test away from the machine's tribunal and router state: their config and ledgers are not the suite's."""
-    monkeypatch.setenv("MODEL_TRIBUNAL_HOME", str(tmp_path_factory.mktemp("tribunal")))
-    monkeypatch.setenv("MODEL_ROUTER_HOME", str(tmp_path_factory.mktemp("router")))
+def _own_profile(tmp_path_factory, monkeypatch):
+    """Keep every test away from the machine's Claude profile, where the tribunal's and the router's state live."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("profile")))
     monkeypatch.delenv("MODEL_TRIBUNAL", raising=False)
     monkeypatch.delenv("MODEL_ROUTER_CHILD", raising=False)
-    monkeypatch.delenv("MODEL_TRIBUNAL_CODEX_HOME", raising=False)
-    monkeypatch.delenv("MODEL_ROUTER_MODELS", raising=False)
 
 
 @pytest.fixture

@@ -18,14 +18,14 @@ from model_router.catalog import ModelSpec, UnknownModelError, parse_cell
 from model_router.classify import classify_rules
 from model_router.cli_client import CliClient
 from model_router.client import ClaudeClient, ClientUnavailableError, LiveClient
-from model_router.paths import CONFIG_DIR_ENV
+from model_router.fmt import money
 from model_router.task import KINDS, RISKS, Task
 
 from . import ledger, qa
 from .catalog import MODELS_KEY, declared_models, load_declared, parse_declaration
 from .codex import MultiClient, resolve_codex_home
 from .codex_models import OPENAI_PRICES_DATE, Proposal, listed_models, price_note, propose
-from .paths import CODEX_HOME_ENV, LEDGER, config_path, home, legacy_note, read_config, save_config, write_config
+from .paths import LEDGER, config_path, home, read_config, write_config
 
 CELL_SETTINGS = ("claude", "codex", "arbiter")
 EXIT = {"pass": 0, "fail": 1, "error": 2}
@@ -64,18 +64,17 @@ def _prompt_from(args: argparse.Namespace) -> str:
         return args.prompt
     if not sys.stdin.isatty():
         return sys.stdin.read()
-    raise SystemExit("no task given: pass it as an argument, with --file or on stdin")
+    raise ValueError("no task given: pass it as an argument, with --file or on stdin")
 
 
 def live_client(args: argparse.Namespace) -> ClaudeClient:
-    """Return the Claude backend `--backend` asks for: the SDK with an API key, or `claude -p` with the account."""
+    """Return the Claude backend `--backend` asks for: the SDK with an API key, or `claude -p` with the account of
+    the Claude profile in use.
+    """
     backend = args.backend
     if backend == "auto":
         backend = "api" if os.environ.get("ANTHROPIC_API_KEY") else "cli"
-    if backend == "api":
-        return LiveClient()
-    config_dir = Path(args.claude_config_dir).expanduser() if args.claude_config_dir else None
-    return CliClient(config_dir=config_dir)
+    return LiveClient() if backend == "api" else CliClient()
 
 
 def _cmd_judge(args: argparse.Namespace) -> int:
@@ -105,7 +104,7 @@ def _report(review: qa.Review) -> int:
         print(f"  {v.role} {v.cell.label}: {'pass' if v.passed else 'fail'}: {v.reason}")
     if review.status == "error":
         print(f"  {review.ruling.reason}")
-    print(f"verdict {review.status} · verification {ledger.money(review.ruling.cost_usd)} · id {review.id}")
+    print(f"verdict {review.status} · verification {money(review.ruling.cost_usd)} · id {review.id}")
     return EXIT[review.status]
 
 
@@ -159,10 +158,7 @@ def _apply_settings(args: argparse.Namespace) -> dict[str, Any]:
             current[key] = value
     if changes:
         qa.resolve({**qa.DEFAULTS, **current})  # judges on one model, an arbiter on a judge's: refused, nothing written
-        config = read_config()
-        for key in qa.SETTING_KEYS:
-            config.pop(key, None)
-        save_config({**config, **current})
+        write_config(**{key: current.get(key) for key in qa.SETTING_KEYS})
     return current
 
 
@@ -181,11 +177,11 @@ def _cmd_config(args: argparse.Namespace) -> int:
         return 2
     print(f"tribunal: mode {seats.mode}, judges {seats.describe()}, {seats.rounds} reviews per turn ({shown}, in "
           f"{config_path()})")
-    for note in [*seats.notes, *filter(None, [legacy_note()])]:
+    for note in seats.notes:
         print(f"  note: {note}")
     for spec in declared_models():
-        ok_, line = _declared_check(spec)
-        print(("  ok    " if ok_ else "  FAIL  ") + line)
+        ready, line = _declared_check(spec)
+        print(("  ok    " if ready else "  FAIL  ") + line)
     return 0
 
 
@@ -203,17 +199,17 @@ def _declared_check(spec: ModelSpec) -> tuple[bool, str]:
     if shutil.which("codex") is None:
         return False, head + "the `codex` executable is not on the PATH"
     try:
-        home_dir, source = resolve_codex_home()
+        home_dir = resolve_codex_home()
     except ClientUnavailableError as exc:
         return False, head + str(exc)
     signed = (home_dir / "auth.json").exists()
     state = "signed in" if signed else f"not signed in: run `CODEX_HOME={home_dir} codex login`"
     known = listed_models(home_dir, include_hidden=True)
     if signed and known is not None and spec.id not in known:
-        return False, head + f"home {home_dir} (via {source}), signed in, but {spec.id} is not among the models it " \
-                             f"knows (Codex refreshes that list when it runs; `tribunal config --codex-models` shows it)"
+        return False, head + f"home {home_dir}, signed in, but {spec.id} is not among the models it knows (Codex " \
+                             f"refreshes that list when it runs; `tribunal config --codex-models` shows it)"
     note = price_note(spec.id, price_in=spec.input, price_out=spec.output)
-    return signed, head + f"home {home_dir} (via {source}), {state}" + (f"; {note}" if note else "")
+    return signed, head + f"home {home_dir}, {state}" + (f"; {note}" if note else "")
 
 
 def _forget(name: str) -> None:
@@ -224,9 +220,7 @@ def _forget(name: str) -> None:
     dropped = [key for key in CELL_SETTINGS if str(config.get(key) or "").partition("/")[0] == name]
     if not dropped:
         return
-    for key in dropped:
-        config.pop(key)
-    save_config(config)
+    write_config(**dict.fromkeys(dropped))
     print(f"{name} was also removed from: {', '.join(dropped)}")
 
 
@@ -251,10 +245,10 @@ def _declare_proposals(proposals: list[Proposal], names: list[str]) -> None:
     by_name = {p.name: p for p in proposals}
     unknown = [n for n in names if n not in by_name]
     if unknown:
-        raise SystemExit(f"not in this home's list: {', '.join(unknown)}; it has {', '.join(by_name)}")
+        raise ValueError(f"not in this home's list: {', '.join(unknown)}; it has {', '.join(by_name)}")
     unpriced = [n for n in names if by_name[n].declared_as is None and by_name[n].declaration is None]
     if unpriced:
-        raise SystemExit(f"no list price known here for {', '.join(unpriced)}; declare it by hand with --declare "
+        raise ValueError(f"no list price known here for {', '.join(unpriced)}; declare it by hand with --declare "
                          "(nothing was declared)")
     for n in dict.fromkeys(names):
         proposal = by_name[n]
@@ -269,13 +263,7 @@ def _codex_models(wanted: str, home_dir: Path | None = None) -> None:
     list), declare those. `home_dir` is the home just given; otherwise the configured one. Nothing is declared
     that was not named.
     """
-    if home_dir is None:
-        try:
-            home_dir, _ = resolve_codex_home()
-        except ClientUnavailableError as exc:
-            raise SystemExit(str(exc)) from exc
-    elif os.environ.get(CODEX_HOME_ENV):
-        print(f"note: {CODEX_HOME_ENV} is set, so the judge runs on {os.environ[CODEX_HOME_ENV]}, not on {home_dir}")
+    home_dir = home_dir or resolve_codex_home()
     ids = listed_models(home_dir)
     if ids is None:
         print(f"no model list in {home_dir} yet: run `CODEX_HOME={home_dir} codex` once and ask again "
@@ -325,12 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
     sj.add_argument("--backend", choices=("auto", "api", "cli"), default="auto",
                     help="api = SDK with ANTHROPIC_API_KEY; cli = `claude -p` with your account; "
                          "auto = api when there is a key, else cli")
-    sj.add_argument("--claude-config-dir", help=f"Claude profile for the cli backend (default: {CONFIG_DIR_ENV})")
     sj.add_argument("--json", action="store_true", help="JSON output with every seat's verdict")
     sj.set_defaults(func=_cmd_judge)
 
     sc = sub.add_parser("config", help="show or set who judges; `default` goes back to the default")
-    sc.add_argument("--mode", choices=(*qa.MODES, "default"), help="off, final (the default) or parallel (not built yet)")
+    sc.add_argument("--mode", choices=(*qa.MODES, "default"), help="final (the default) or off")
     sc.add_argument("--claude", metavar="CELL", help="the Claude judge (default opus/high; never the chat's model)")
     sc.add_argument("--codex", metavar="CELL", help="the Codex judge (default: the declared codex model of the highest tier)")
     sc.add_argument("--arbiter", metavar="CELL", help="the arbiter of a split (default: a Claude model neither judge is on)")

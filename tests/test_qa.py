@@ -9,12 +9,13 @@ import pytest
 from model_router.catalog import Usage, parse_cell
 from model_router.client import ClientUnavailableError
 from model_router.paths import CHILD_ENV
+from model_router.paths import write_config as router_config
 from model_router.testing import FakeClient, Reply
 from model_router.verify import Verdict
 
 from model_tribunal import cli, hook, ledger, qa
 from model_tribunal.catalog import load_declared
-from model_tribunal.paths import read_config, write_config
+from model_tribunal.paths import LEDGER, home, read_config, write_config
 
 
 def ok(reason="fine"):
@@ -83,7 +84,7 @@ def test_settings_come_from_machine_repo_and_brief_and_never_judge_with_the_chat
     assert (s.mode, s.claude.label, s.rounds) == ("final", "opus/high", 2)
     assert s.codex == parse_cell("fable/medium") and s.notes  # no codex model declared: a second Claude judge
     assert s.arbiter == parse_cell("sonnet/high")
-    s = qa.settings(repo, chat_model="opus")
+    s = qa.resolve(qa.raw_settings(repo), "opus")
     assert s.claude.spec.short != "opus" and s.arbiter is not None
     assert s.arbiter.spec.short not in {j.spec.short for j in s.judges}  # the chat's model only as a last resort
     try:
@@ -91,7 +92,7 @@ def test_settings_come_from_machine_repo_and_brief_and_never_judge_with_the_chat
                                   "luna": {"id": "gpt-6-luna", "input": 0.1, "output": 0.5, "tier": 0}}})
         s = qa.settings(repo)
         assert s.codex == parse_cell("terra/high") and not s.notes  # the declared codex model of the highest tier
-        s = qa.settings(repo, chat_model="opus")
+        s = qa.resolve(qa.raw_settings(repo), "opus")
         assert s.claude.spec.short == "fable" and s.arbiter == parse_cell("sonnet/high")  # neither judge, nor the chat
         write_config(codex="luna/medium", rounds=3)
         (repo / ".claude").mkdir()
@@ -99,8 +100,7 @@ def test_settings_come_from_machine_repo_and_brief_and_never_judge_with_the_chat
         s = qa.settings(repo)
         assert (s.mode, s.codex, s.rounds) == ("off", parse_cell("luna/medium"), 3)
         assert qa.settings(repo, "qa: final\nfix the bug").mode == "final"  # the brief wins over the repository
-        s = qa.settings(repo, "Migrate the schema. qa: parallel")
-        assert s.mode == "final" and any("parallel is not built yet" in n for n in s.notes)
+        assert qa.settings(repo, "Migrate the schema. qa: parallel").mode == "off"  # no such mode: the repository's
         assert qa.settings(repo, "line one\nline two\nqa: final").mode == "off"  # only the first two lines declare
         (repo / ".claude" / "tribunal.json").write_text(json.dumps({"mode": "sideways"}))
         with pytest.raises(ValueError, match="unknown qa mode"):
@@ -109,13 +109,13 @@ def test_settings_come_from_machine_repo_and_brief_and_never_judge_with_the_chat
         load_declared({})
 
 
-def test_run_qa_asks_both_judges_blind_and_the_arbiter_settles_a_split(repo, tmp_path):
+def test_run_qa_asks_both_judges_blind_and_the_arbiter_settles_a_split(repo):
     seats = qa.settings(repo)
-    path = tmp_path / "ledger.jsonl"
+    path = home() / LEDGER
     client = FakeClient(judge={"opus/high": [ok("does the job")], "fable/medium": [ko("off by one")],
                                "sonnet/high": [ko("judge B was right")]})
     review = qa.run_qa(repo, "make add return the sum", diff="diff --git a/calc.py ...", seats=seats, client=client,
-                       ledger_path=path, files=1)
+                       files=1)
     assert review.status == "fail" and review.ruling.source == "tribunal" and review.ruling.arbiter == parse_cell("sonnet/high")
     assert "arbiter sonnet/high sided with fable/medium" in review.ruling.reason and "calc.py:2" in review.ruling.reason
     calls = [c for c in client.calls if c["output_format"] == "Verdict"]
@@ -128,15 +128,14 @@ def test_run_qa_asks_both_judges_blind_and_the_arbiter_settles_a_split(repo, tmp
     assert [v["role"] for v in record["verdicts"]] == ["judge", "judge", "arbiter"]
 
 
-def test_a_judge_that_cannot_be_reached_is_an_error_not_a_verdict(repo, tmp_path):
+def test_a_judge_that_cannot_be_reached_is_an_error_not_a_verdict(repo):
     class Down(FakeClient):
         def complete(self, cell, **kw):
             if cell.label == "fable/medium":
                 raise ClientUnavailableError("usage limit reached")
             return super().complete(cell, **kw)
 
-    review = qa.run_qa(repo, "x", diff="diff", seats=qa.settings(repo), client=Down(judge={"*": [ok()]}),
-                       ledger_path=tmp_path / "l.jsonl")
+    review = qa.run_qa(repo, "x", diff="diff", seats=qa.settings(repo), client=Down(judge={"*": [ok()]}))
     assert review.status == "error" and review.passed is None and "usage limit reached" in review.ruling.reason
 
 
@@ -171,6 +170,44 @@ def test_the_hook_blocks_a_failed_change_until_the_rounds_run_out(hooked):
     (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
     passed = hook.handle(event("Stop"))
     assert passed is not None and passed["systemMessage"].startswith("tribunal: pass (") and "1 files" in passed["systemMessage"]
+
+
+def test_a_judge_error_leaves_the_rounds_and_settings_that_do_not_resolve_are_said(hooked):
+    repo, client, event = hooked
+    hook.handle(event("UserPromptSubmit", prompt="make add return the sum"))
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b + 1\n")
+    client.judge = {"*": [Reply("{}", parsed=None)]}  # no verdict from anyone: the tribunal cannot judge
+    error = hook.handle(event("Stop"))
+    assert error is not None and error["systemMessage"].startswith("tribunal: could not judge")
+    client.judge = {"*": [ko("still off by one")]}
+    first = hook.handle(event("Stop"))  # the same tree again: the error did not count as a review
+    assert first is not None and first["decision"] == "block" and "review 1 of 2" in first["reason"]
+    write_config(claude="opus/high", codex="opus/low")  # two judges on one model
+    hook.handle(event("UserPromptSubmit", prompt="again"))
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b + 2\n")
+    said = hook.handle(event("Stop"))
+    assert said is not None and said["systemMessage"].startswith("tribunal: not judged, the settings do not resolve")
+
+
+def test_rounds_0_means_one_review_and_a_broken_state_entry_is_dropped():
+    assert qa.resolve({"rounds": 0}).rounds == 1 and qa.resolve({}).rounds == 2
+    path = home() / hook.STATE_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"broken": "not an object", "s1": {"at": "x", "open": False}}))
+    with hook.sessions() as state:
+        assert list(state) == ["s1"]
+
+
+def test_a_cli_usage_error_exits_2_not_1_which_means_a_failed_review(tmp_path, monkeypatch, capsys):
+    class Terminal:
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("sys.stdin", Terminal())
+    answer = tmp_path / "answer.md"
+    answer.write_text("text")
+    assert cli.main(["judge", "--answer", str(answer)]) == 2
+    assert "no task given" in capsys.readouterr().err
 
 
 def test_the_hook_leaves_docs_off_repos_and_the_router_s_own_sessions_alone(hooked, monkeypatch, tmp_path):
@@ -248,10 +285,10 @@ def test_a_fresh_repository_and_no_head_work(tmp_path):
     assert qa.changed_files(path, base=qa.empty_tree(path), current=qa.snapshot(path)) == ["a.py"]
 
 
-def test_fallback_judges_stay_on_the_models_this_installation_has(repo, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "haiku,sonnet,opus")
+def test_fallback_judges_stay_on_the_models_this_installation_has(repo):
+    router_config(models=["haiku", "sonnet", "opus"])
     for chat in (None, "opus", "sonnet"):
-        s = qa.settings(repo, chat_model=chat)
+        s = qa.resolve(qa.raw_settings(repo), chat)
         assert all(c.spec.short != "fable" for c in [*s.judges, *([s.arbiter] if s.arbiter else [])]), chat
     assert qa.resolve({"rounds": 50}).rounds == qa.MAX_ROUNDS and qa.resolve({"rounds": "many"}).rounds == 2
 
@@ -376,9 +413,9 @@ def test_a_big_diff_keeps_its_file_list_and_its_closing_tag():
     assert shown.endswith("a judge that can read the repository may open the rest ...]")
 
 
-def test_seating_never_repeats_a_model_and_one_judge_when_nothing_else_is_left(repo, monkeypatch):
-    monkeypatch.setenv("MODEL_ROUTER_MODELS", "opus,sonnet")
-    s = qa.settings(repo, chat_model="sonnet")
+def test_seating_never_repeats_a_model_and_one_judge_when_nothing_else_is_left(repo):
+    router_config(models=["opus", "sonnet"])
+    s = qa.resolve(qa.raw_settings(repo), "sonnet")
     assert [c.label for c in s.judges] == ["opus/high"] and s.arbiter is None and s.notes  # no second model left
     with pytest.raises(ValueError, match="another model than judge A"):
         qa.resolve({"claude": "opus/high", "codex": "opus/low"})
@@ -471,8 +508,8 @@ def test_config_lists_what_a_codex_home_can_run_and_declares_only_what_is_named(
         out = capsys.readouterr().out  # declared first, so --codex in the same command may name one of them
         assert sorted(s.short for s in declared_models()) == ["luna", "sol"]  # astra stays out: it was not named
         assert "judges opus/high + sol/high" in out and "ok    sol: codex gpt-6-sol" in out
-        with pytest.raises(SystemExit, match="not in this home's list: nova"):
-            cli.main(["config", "--codex-models", "nova"])
+        assert cli.main(["config", "--codex-models", "nova"]) == 2
+        assert "not in this home's list: nova" in capsys.readouterr().err
         assert cli.main(["config", "--declare", "sol=codex/gpt-6-sol@5/30/1"]) == 0
         assert "declared at 5/30, OpenAI lists 2/10" in capsys.readouterr().out  # a price typed by hand, not the list one
         assert cli.main(["config", "--declare", "old=codex/gpt-6.1-sol@2/10/1"]) == 0

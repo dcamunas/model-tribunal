@@ -86,7 +86,7 @@ def test_codex_tries_once_more_when_a_verdict_was_wanted_and_did_not_come_and_th
     c = CodexClient(tmp_path, binary="python3", run=run).complete(parse_cell("luna/low"), prompt="x", output_format=Verdict)
     assert len(run.calls) == 2 and c.parsed is None  # the tribunal will report a judge error
     run = FakeRun(_codex_events("plain answer"))
-    c = CodexClient(tmp_path, binary="python3", run=run).complete(parse_cell("luna/max"), prompt="x")
+    c = CodexClient(tmp_path, binary="python3", run=run).complete(parse_cell("luna/xhigh"), prompt="x")
     assert len(run.calls) == 1 and c.text == "plain answer" and 'model_reasoning_effort="xhigh"' in run.calls[0]["args"]
 
 
@@ -124,13 +124,11 @@ def test_codex_errors_and_timeouts_fail_closed(declared, tmp_path):
         CodexClient(tmp_path, binary="no-such-binary-here")
 
 
-def test_codex_home_comes_from_the_environment_then_config_and_never_the_ambient_one(tmp_path, monkeypatch):
+def test_codex_home_comes_from_the_config_and_never_the_ambient_one():
     with pytest.raises(ClientUnavailableError, match="--codex-home"):
         resolve_codex_home()
-    path = write_config(codex_home="~/.codex-personal")
-    assert resolve_codex_home() == (Path("~/.codex-personal").expanduser(), str(path))
-    monkeypatch.setenv("MODEL_TRIBUNAL_CODEX_HOME", str(tmp_path / "other"))
-    assert resolve_codex_home() == (tmp_path / "other", "MODEL_TRIBUNAL_CODEX_HOME")
+    write_config(codex_home="~/.codex-judge")
+    assert resolve_codex_home() == Path("~/.codex-judge").expanduser()
 
 
 def test_multi_client_opens_the_codex_door_on_first_use_and_a_missing_home_fails_only_then(declared):

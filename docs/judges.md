@@ -14,8 +14,8 @@ Which model sits where, why, and why two judges rather than a council.
   itself. One extra call, only on a split.
 - Only models this installation has are picked (`router config --models`). Judge B and the arbiter
   are never on judge A's model; when no other model is left, one judge decides alone and says so.
-- When one judge cannot be reached, the other's verdict is still shown to you; it is not a tribunal,
-  so nothing is sent back.
+- When one judge cannot be reached, the review is reported as not judged, with what the other judge
+  said; nothing is sent back, and the turn keeps its reviews.
 
 ## Why two judges and not a council
 

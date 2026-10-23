@@ -20,12 +20,13 @@ your request before the turn ends.
   the tree when the request arrives, through a temporary git index, so your index and your files are
   not touched, and a commit made during the turn is still part of it.
 - **What is not judged.** A turn that changed nothing, or only documentation (`.md`, `.rst`). A judge
-  that cannot be reached, a spent quota for instance, is reported and never blocks.
+  that cannot be reached, a spent quota for instance, is reported, never blocks and does not use up a
+  review. Settings that do not resolve, or a repository git cannot snapshot, are reported in one line.
 - **No switching itself off.** The settings are taken when your request arrives, so nothing the work
   writes during the turn can turn its own review off.
 - **Other sessions.** If another Claude Code session edits the same repository during the turn (its
-  transcript shows an editing tool), its edits are in the diff too, so a fail is reported to you and
-  not sent back. A session that only reads does not count.
+  transcript shows an editing tool, Bash included, since a command can write), its edits are in the diff
+  too, so a fail is reported to you and not sent back. A session that only read files does not count.
 
 ## Settings
 

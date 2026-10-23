@@ -2,7 +2,9 @@
 
 [← Tribunal README](../README.md)
 
-Reviewing a branch, or a text written elsewhere, from a terminal.
+Reviewing a branch, or a text written elsewhere. In a Claude Code session the plugin brings the `tribunal`
+command; in a terminal it is in the plugin's environment,
+`~/.claude/plugins/data/tribunal-dcamunas/venv/bin/tribunal`.
 
 ```bash
 tribunal qa --brief "what the change was for"            # uncommitted work in this repository
@@ -12,8 +14,9 @@ tribunal judge "write the incident notice" --kind write --risk critical --answer
 ```
 
 `tribunal judge` is for a text written elsewhere: critical prose, an analysis, a review. `--cell`
-names the model that wrote it, so it is not one of its judges.
+names the model that wrote it, so it is not one of its judges. It calls Claude with the account of the
+Claude profile in use, or with `ANTHROPIC_API_KEY` when it is set (`--backend` picks one).
 
 Both exit 0 on a pass (or when there is nothing to judge), 1 on a fail and 2 when they could not
-judge. Every verdict goes to the tribunal's ledger: `tribunal stats` shows the reviews and the judges'
+judge or the command could not run. Every verdict goes to the tribunal's ledger: `tribunal stats` shows the reviews and the judges'
 scoreboard.

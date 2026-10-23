@@ -28,15 +28,17 @@ ChatGPT account.
 ```bash
 claude plugin marketplace add dcamunas/claude-plugins
 claude plugin install tribunal@dcamunas
-uv tool install git+https://github.com/dcamunas/model-tribunal@v0.1.4   # the `tribunal` command
+```
+
+The first session builds the plugin's own environment with uv and brings the `tribunal` command to
+Claude Code's shell. Then, in a session, ask Claude to run:
+
+```bash
 tribunal config --codex-home ~/.codex          # your Codex home; lists its models
 tribunal config --codex-models terra           # the Codex model that judges
 ```
 
-Coming from the plugin that lived inside model-router: set the Codex home and the models again, the
-tribunal reads nothing from the router's state. The first session builds the plugin's own environment
-with uv; from then on, a turn that changes code
-ends with one line, or with the findings sent back to Claude. With an Opus chat and Terra as the Codex
+From then on, a turn that changes code ends with one line, or with the findings sent back to Claude. With an Opus chat and Terra as the Codex
 model, the line reads `tribunal: pass (fable/medium + terra/high, arbiter sonnet/high), 3 files`. Without
 a Codex model it still runs, with a second Claude model as judge B, and says so.
 
@@ -85,8 +87,6 @@ The full rules and the settings: [Judges and arbiter](docs/judges.md) and
 
 ## Limits
 
-- **No parallel mode yet.** `qa: parallel`, Claude and Codex both building the same change and then
-  comparing, is not built; it runs as a final review. It is the mode meant for migrations.
 - **Submodules.** An edit inside a git submodule is not seen; the submodule counts as its committed
   pointer.
 - **Large files.** Untracked files above 1 MB are left out of the snapshot (databases, logs, builds).

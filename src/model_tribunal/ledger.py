@@ -5,64 +5,27 @@ often the arbiter backed it on a split).
 
 from __future__ import annotations
 
-import fcntl
 import json
 from collections import defaultdict
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any  # Any: ledger records are JSON lines
 
-from .verify import ARBITER
+from model_router.fmt import money, table
+from model_router.paths import locked, read_jsonl
 
-SMALL_AMOUNT_USD = 0.01  # below this, two decimals would show nothing
+from .verify import ARBITER
 
 
 def append(path: Path, record: dict[str, Any]) -> None:
     """Append `record` as one JSON line to `path`, under a lock, creating the directory."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.with_suffix(".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with locked(path), path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def load(path: Path) -> list[dict[str, Any]]:
     """Return every record in file order; a line that is not a JSON object (a write cut short) is skipped."""
-    if not path.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    with path.open("rb") as handle:
-        for raw in handle:
-            try:
-                record = json.loads(raw.decode("utf-8"))
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                out.append(record)
-    return out
-
-
-def money(value: float | None) -> str:
-    """Format a USD amount for a table, with the precision small verification costs need."""
-    if value is None:
-        return "-"
-    return f"${value:.4f}" if value < SMALL_AMOUNT_USD else f"${value:.2f}"
-
-
-def table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
-    """Render `rows` under `headers` as aligned plain text; numeric columns are right-aligned."""
-    cells = [[str(h) for h in headers]] + [[str(c) for c in row] for row in rows]
-    widths = [max(len(r[i]) for r in cells) for i in range(len(headers))]
-    numeric = [all(isinstance(r[i], int | float) for r in rows) for i in range(len(headers))] if rows else []
-    lines = []
-    for n, row in enumerate(cells):
-        parts = []
-        for i, text in enumerate(row):
-            right = n > 0 and numeric and numeric[i]
-            parts.append(text.rjust(widths[i]) if right else text.ljust(widths[i]))
-        lines.append("  ".join(parts).rstrip())
-    return "\n".join(lines)
+    return read_jsonl(path)
 
 
 @dataclass
